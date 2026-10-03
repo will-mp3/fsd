@@ -1,0 +1,44 @@
+[project]
+name = "fsd"
+version = "0.1.0"
+description = "Computer-use harness: operate desktop applications from pixels under per-app approval"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "pyobjc-framework-Cocoa>=12.0; sys_platform == 'darwin'",
+    "pyobjc-framework-Quartz>=12.0; sys_platform == 'darwin'",
+    "pyobjc-framework-ScreenCaptureKit>=12.0; sys_platform == 'darwin'",
+    "pyobjc-framework-ApplicationServices>=12.0; sys_platform == 'darwin'",
+]
+
+[project.scripts]
+fsd = "fsd.cli:main"
+
+[dependency-groups]
+dev = ["pytest>=8", "ruff>=0.6", "mypy>=1.11"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/fsd"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["live: touches the real macOS desktop; runs only with FSD_LIVE=1"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.mypy]
+strict = true
+files = ["src", "tests"]
+
+[[tool.mypy.overrides]]
+module = ["Quartz.*", "AppKit.*", "Foundation.*", "ScreenCaptureKit.*", "ApplicationServices.*"]
+ignore_missing_imports = true
