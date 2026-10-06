@@ -14,10 +14,10 @@ from fsd.platform.base import (
 
 
 def test_mandatory_capabilities_are_capture_and_owner_lookup() -> None:
-    assert MANDATORY_CAPABILITIES == {
+    assert {
         Capability.FILTERED_CAPTURE,
         Capability.WINDOW_OWNER_LOOKUP,
-    }
+    } == MANDATORY_CAPABILITIES
 
 
 def test_rect_contains_is_half_open() -> None:
