@@ -128,7 +128,7 @@ def topmost_owner(windows: Sequence[WindowInfo], point: ScreenPoint) -> str | No
 
 
 class Platform(Protocol):
-    """Synchronouse OS operations; callers preserve the backend's main-thread requirements."""
+    """Synchronous OS operations; callers preserve the backend's main-thread requirements."""
 
     capabilities: frozenset[Capability]
 
