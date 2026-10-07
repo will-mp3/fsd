@@ -30,6 +30,7 @@ markers = ["live: touches the real macOS desktop; runs only with FSD_LIVE=1"]
 
 [tool.ruff]
 line-length = 100
+indent-width = 2
 target-version = "py312"
 
 [tool.ruff.lint]
