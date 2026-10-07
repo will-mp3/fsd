@@ -9,7 +9,7 @@ from fsd.platform.fake import FakePlatform
 
 def test_unknown_system_is_refused_with_an_explanation(monkeypatch: pytest.MonkeyPatch) -> None:
   monkeypatch.setattr(sys, "platform", "linux")
-  with pytest.raises(UnsupportedPlatformError, match="Only macOS is supported"):
+  with pytest.raises(UnsupportedPlatformError, match="Only macOS is supported at this time"):
     select_backend()
 
 
