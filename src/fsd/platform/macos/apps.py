@@ -4,6 +4,9 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
 
+import AppKit
+import Foundation
+
 from fsd.platform.base import AppInfo
 
 # System UI needs explicit approval just like ordinary applications.
@@ -18,6 +21,32 @@ SYSTEM_SURFACES: dict[str, str] = {
   "com.apple.coreservices.uiagent": "System dialogs (CoreServicesUIAgent)",
   "com.apple.SecurityAgent": "System dialogs (SecurityAgent)",
 }
+
+
+def _refresh_workspace() -> None:
+  # A CLI must service the run loop so application state can update.
+  Foundation.NSRunLoop.currentRunLoop().runUntilDate_(
+    Foundation.NSDate.dateWithTimeIntervalSinceNow_(0.01)
+  )
+
+
+def bundle_id_for_pid(pid: int) -> str | None:
+  app = AppKit.NSRunningApplication.runningApplicationWithProcessIdentifier_(pid)
+  if app is None:
+    return None
+
+  bundle_id = app.bundleIdentifier()
+  return str(bundle_id) if bundle_id is not None else None
+
+
+def frontmost_app() -> str | None:
+  _refresh_workspace()
+  app = AppKit.NSWorkspace.sharedWorkspace().frontmostApplication()
+  if app is None:
+    return None
+
+  bundle_id = app.bundleIdentifier()
+  return str(bundle_id) if bundle_id is not None else None
 
 
 def merge_apps(
