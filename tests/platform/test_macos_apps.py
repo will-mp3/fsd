@@ -10,6 +10,24 @@ from fsd.platform.base import AppInfo  # noqa: E402
 from fsd.platform.macos import apps as macos_apps  # noqa: E402
 
 
+def _write_app_bundle(directory: Path, name: str, bundle_id: str | None) -> None:
+  contents = directory / name / "Contents"
+  contents.mkdir(parents=True)
+  metadata = {"CFBundlePackageType": "APPL", "CFBundleName": Path(name).stem}
+  if bundle_id is not None:
+    metadata["CFBundleIdentifier"] = bundle_id
+  with (contents / "Info.plist").open("wb") as file:
+    plistlib.dump(metadata, file)
+
+
+def _running_app(policy: int, bundle_id: str | None, name: str | None) -> SimpleNamespace:
+  return SimpleNamespace(
+    activationPolicy=lambda: policy,
+    bundleIdentifier=lambda: bundle_id,
+    localizedName=lambda: name,
+  )
+
+
 @pytest.mark.parametrize(
   ("present", "bundle_id"),
   [(True, "com.example.app"), (True, None), (False, None)],
@@ -43,16 +61,6 @@ def test_frontmost_app_handles_unidentified_apps(
   assert macos_apps.frontmost_app() == bundle_id
 
 
-def _write_app_bundle(directory: Path, name: str, bundle_id: str | None) -> None:
-  contents = directory / name / "Contents"
-  contents.mkdir(parents=True)
-  metadata = {"CFBundlePackageType": "APPL", "CFBundleName": Path(name).stem}
-  if bundle_id is not None:
-    metadata["CFBundleIdentifier"] = bundle_id
-  with (contents / "Info.plist").open("wb") as file:
-    plistlib.dump(metadata, file)
-
-
 def test_installed_reads_app_bundles_and_skips_missing_identifiers(
   monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -74,14 +82,6 @@ def test_installed_reads_app_bundles_and_skips_missing_identifiers(
     ("com.example.bravo", "Bravo"),
     ("com.example.utility", "Utility"),
   ]
-
-
-def _running_app(policy: int, bundle_id: str | None, name: str | None) -> SimpleNamespace:
-  return SimpleNamespace(
-    activationPolicy=lambda: policy,
-    bundleIdentifier=lambda: bundle_id,
-    localizedName=lambda: name,
-  )
 
 
 def test_list_apps_combines_discovery_and_excludes_unidentified_or_background_processes(
