@@ -2,7 +2,9 @@
 
 import json
 import os
+from contextlib import suppress
 from pathlib import Path
+from tempfile import NamedTemporaryFile
 
 _FORMAT_VERSION = 1
 
@@ -32,6 +34,12 @@ class ApprovalStore:
   def approved(self) -> frozenset[str]:
     return frozenset(self._approved)
 
+  def approve(self, bundle_id: str) -> None:
+    self._save(self._approved | {bundle_id})
+
+  def block(self, bundle_id: str) -> None:
+    self._save(self._approved - {bundle_id})
+
   def _load(self) -> set[str]:
     try:
       data = json.loads(self._path.read_text(encoding="utf-8"))
@@ -52,6 +60,36 @@ class ApprovalStore:
       raise self._corrupt("expected an 'approved' list of bundle identifiers")
 
     return set(approved)
+
+  def _save(self, approved: set[str]) -> None:
+    payload = {"version": _FORMAT_VERSION, "approved": sorted(approved)}
+    temporary: Path | None = None
+
+    try:
+      self._path.parent.mkdir(parents=True, exist_ok=True)
+
+      # Keeping both files on the same filesystem permits atomic replacement.
+      with NamedTemporaryFile(
+        mode="w",
+        encoding="utf-8",
+        dir=self._path.parent,
+        prefix=f".{self._path.name}.",
+        suffix=".tmp",
+        delete=False,
+      ) as file:
+        temporary = Path(file.name)
+        json.dump(payload, file, indent=2)
+        file.write("\n")
+
+      os.replace(temporary, self._path)
+      self._approved = approved
+    except OSError as exc:
+      raise ApprovalStoreError(f"Could not write approvals to {self._path}: {exc}") from exc
+    finally:
+      if temporary is not None:
+        # Cleanup failure most not hide the original save error.
+        with suppress(OSError):
+          temporary.unlink(missing_ok=True)
 
   def _corrupt(self, detail: str) -> ApprovalStoreError:
     return ApprovalStoreError(
