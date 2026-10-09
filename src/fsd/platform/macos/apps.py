@@ -6,6 +6,19 @@ from collections.abc import Iterable, Mapping
 
 from fsd.platform.base import AppInfo
 
+# System UI needs explicit approval just like ordinary applications.
+SYSTEM_SURFACES: dict[str, str] = {
+  "com.apple.dock": "Dock",
+  "unidentified:Window Server": "Menu bar (Window Server)",
+  "com.apple.systemuiserver": "Menu bar extras (SystemUIServer)",
+  "com.apple.Spotlight": "Spotlight",
+  "com.apple.controlcenter": "Control Center",
+  "com.apple.notificationcenterui": "Notification Center",
+  "com.apple.UserNotificationCenter": "System dialogs (UserNotificationCenter)",
+  "com.apple.coreservices.uiagent": "System dialogs (CoreServicesUIAgent)",
+  "com.apple.SecurityAgent": "System dialogs (SecurityAgent)",
+}
+
 
 def merge_apps(
   installed: Iterable[tuple[str, str]],
