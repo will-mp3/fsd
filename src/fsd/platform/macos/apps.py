@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
+from pathlib import Path
 
 import AppKit
 import Foundation
@@ -21,6 +22,14 @@ SYSTEM_SURFACES: dict[str, str] = {
   "com.apple.coreservices.uiagent": "System dialogs (CoreServicesUIAgent)",
   "com.apple.SecurityAgent": "System dialogs (SecurityAgent)",
 }
+
+_APP_DIRECTORIES = (
+  Path("/Applications"),
+  Path("/Applications/Utilities"),
+  Path("/System/Applications"),
+  Path("/System/Applications/Utilities"),
+  Path.home() / "Applications",
+)
 
 
 def _refresh_workspace() -> None:
@@ -49,6 +58,42 @@ def frontmost_app() -> str | None:
   return str(bundle_id) if bundle_id is not None else None
 
 
+def _installed() -> list[tuple[str, str]]:
+  found: list[tuple[str, str]] = []
+  for directory in _APP_DIRECTORIES:
+    if not directory.is_dir():
+      continue
+
+    for path in sorted(directory.glob("*.app")):
+      bundle = Foundation.NSBundle.bundleWithPath_(str(path))
+      if bundle is None:
+        continue
+
+      bundle_id = bundle.bundleIdentifier()
+      if bundle_id is None:
+        continue
+
+      found.append((str(bundle_id), path.stem))
+  return found
+
+
+def _running() -> list[tuple[str, str]]:
+  _refresh_workspace()
+  found: list[tuple[str, str]] = []
+  for app in AppKit.NSWorkspace.sharedWorkspace().runningApplications():
+    # Keep the ordinary app list focused on apps with Dock icons
+    if app.activationPolicy() != AppKit.NSApplicationActivationPolicyRegular:
+      continue
+
+    bundle_id = app.bundleIdentifier()
+    if bundle_id is None:
+      continue
+
+    name = app.localizedName()
+    found.append((str(bundle_id), str(name) if name else str(bundle_id)))
+  return found
+
+
 def merge_apps(
   installed: Iterable[tuple[str, str]],
   running: Iterable[tuple[str, str]],
@@ -70,3 +115,7 @@ def merge_apps(
     for bundle_id, name in surfaces.items()
   )
   return apps
+
+
+def list_apps() -> list[AppInfo]:
+  return merge_apps(_installed(), _running(), SYSTEM_SURFACES)
