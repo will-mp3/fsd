@@ -1,10 +1,10 @@
 import json
+import os
 import re
 from pathlib import Path
 
 import pytest
 
-from fsd.approval import store as store_module
 from fsd.approval.store import ApprovalStore, ApprovalStoreError, default_store_path
 
 
@@ -126,7 +126,7 @@ def test_failed_replace_preserves_memory_and_disk(
   def fail_replace(source: Path, destination: Path) -> None:
     raise OSError("simulated replacement failure")
 
-  monkeypatch.setattr(store_module.os, "replace", fail_replace)
+  monkeypatch.setattr(os, "replace", fail_replace)
   with pytest.raises(ApprovalStoreError, match=re.escape(str(path))):
     if operation == "approve":
       store.approve("com.apple.Notes")
