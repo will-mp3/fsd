@@ -4,6 +4,7 @@ Quartz = pytest.importorskip("Quartz", reason="macOS backend needs pyobjc")
 
 from fsd.platform.base import AppInfo, Rect, WindowInfo  # noqa: E402
 from fsd.platform.macos import apps as macos_apps  # noqa: E402
+from fsd.platform.macos import input as macos_input  # noqa: E402
 from fsd.platform.macos import windows as macos_windows  # noqa: E402
 from fsd.platform.macos.apps import merge_apps  # noqa: E402
 from fsd.platform.macos.windows import window_from_entry  # noqa: E402
@@ -121,3 +122,85 @@ def test_utf16_length_counts_code_units(text: str, expected: int) -> None:
   from fsd.platform.macos.input import utf16_length
 
   assert utf16_length(text) == expected
+
+
+@pytest.fixture
+def posted_keyboard_events(monkeypatch: pytest.MonkeyPatch) -> list[tuple[int, int, int, int]]:
+  posted: list[tuple[int, int, int, int]] = []
+
+  def record(tap: int, event: object) -> None:
+    posted.append(
+      (
+        tap,
+        int(Quartz.CGEventGetType(event)),
+        int(Quartz.CGEventGetIntegerValueField(event, Quartz.kCGKeyboardEventKeycode)),
+        int(Quartz.CGEventGetFlags(event)),
+      )
+    )
+
+  monkeypatch.setattr(Quartz, "CGEventPost", record)
+  return posted
+
+
+@pytest.mark.parametrize(
+  ("combo", "keycode", "flags"),
+  [
+    ("Cmd+Shift+A", 0, Quartz.kCGEventFlagMaskCommand | Quartz.kCGEventFlagMaskShift),
+    ("ctrl+alt+left", 123, Quartz.kCGEventFlagMaskControl | Quartz.kCGEventFlagMaskAlternate),
+    ("z", 6, 0),
+    ("0", 29, 0),
+    ("9", 25, 0),
+    ("return", 36, 0),
+    ("tab", 48, 0),
+    ("space", 49, 0),
+    ("escape", 53, 0),
+    ("delete", 51, 0),
+    ("right", 124, 0),
+    ("up", 126, 0),
+    ("down", 125, 0),
+  ],
+)
+def test_press_keys_posts_matching_down_and_up_events(
+  posted_keyboard_events: list[tuple[int, int, int, int]],
+  combo: str,
+  keycode: int,
+  flags: int,
+) -> None:
+  macos_input.press_keys(combo)
+
+  assert posted_keyboard_events == [
+    (Quartz.kCGHIDEventTap, Quartz.kCGEventKeyDown, keycode, flags),
+    (Quartz.kCGHIDEventTap, Quartz.kCGEventKeyUp, keycode, flags),
+  ]
+
+
+@pytest.mark.parametrize("combo", ["cmd+nosuchkey", "hyper+a", "cmd+", "cmd", ""])
+def test_press_keys_rejects_invalid_combinations_without_posting(
+  posted_keyboard_events: list[tuple[int, int, int, int]], combo: str
+) -> None:
+  with pytest.raises(ValueError):
+    macos_input.press_keys(combo)
+
+  assert posted_keyboard_events == []
+
+
+@pytest.mark.parametrize("failed_key_down", [True, False], ids=["down-fails", "up-fails"])
+def test_press_keys_rejects_event_creation_failure_before_posting(
+  monkeypatch: pytest.MonkeyPatch,
+  posted_keyboard_events: list[tuple[int, int, int, int]],
+  failed_key_down: bool,
+) -> None:
+  create_event = Quartz.CGEventCreateKeyboardEvent
+
+  def create(source: object, keycode: int, key_down: bool) -> object | None:
+    if key_down == failed_key_down:
+      return None
+    event: object = create_event(source, keycode, key_down)
+    return event
+
+  monkeypatch.setattr(Quartz, "CGEventCreateKeyboardEvent", create)
+
+  with pytest.raises(RuntimeError, match="Could not create keyboard event"):
+    macos_input.press_keys("cmd+a")
+
+  assert posted_keyboard_events == []
