@@ -6,6 +6,7 @@
 - Present each change as a code block with its file path and enough surrounding context for me to place it, then stop and let me type and test it. This overrides and "write the file" step in a skill or workflow.
 - EXEMPT: test files, non-code artifacts such as memory files, docs, config, and generated/vendored output.
 - Design explanation should come before, during, and after implementation code. Explanation should be viewed as part of the implementation, not an accessory.
+- Provided test cases should have their purpose described along with what they are testing for.
 - Each implementation should come with followup questions to ensure understanding.
 
 ## Source of truth
