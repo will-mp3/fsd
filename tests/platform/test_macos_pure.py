@@ -184,11 +184,80 @@ def test_press_keys_rejects_invalid_combinations_without_posting(
   assert posted_keyboard_events == []
 
 
+@pytest.fixture
+def posted_text_events(monkeypatch: pytest.MonkeyPatch) -> list[tuple[int, int, str, int]]:
+  posted: list[tuple[int, int, str, int]] = []
+
+  def record(tap: int, event: object) -> None:
+    assert tap == Quartz.kCGHIDEventTap
+    length, text = Quartz.CGEventKeyboardGetUnicodeString(event, 8, None, None)
+    posted.append(
+      (
+        int(Quartz.CGEventGetType(event)),
+        int(length),
+        str(text),
+        int(Quartz.CGEventGetFlags(event)),
+      )
+    )
+
+  monkeypatch.setattr(Quartz, "CGEventPost", record)
+  return posted
+
+
+@pytest.mark.parametrize(
+  ("text", "characters"),
+  [
+    ("", []),
+    ("Ab", [("A", 1), ("b", 1)]),
+    ("\u00e9", [("\u00e9", 1)]),
+    ("e\u0301", [("e", 1), ("\u0301", 1)]),
+    ("\U0001d11e", [("\U0001d11e", 2)]),
+    ("a\U0001d11eb", [("a", 1), ("\U0001d11e", 2), ("b", 1)]),
+  ],
+  ids=["empty", "ascii", "accented", "combining", "surrogate-pair", "mixed"],
+)
+def test_type_text_posts_unicode_down_and_up_events_in_order(
+  posted_text_events: list[tuple[int, int, str, int]],
+  text: str,
+  characters: list[tuple[str, int]],
+) -> None:
+  macos_input.type_text(text)
+
+  assert posted_text_events == [
+    (event_type, length, character, 0)
+    for character, length in characters
+    for event_type in (Quartz.kCGEventKeyDown, Quartz.kCGEventKeyUp)
+  ]
+
+
+def test_type_text_clears_inherited_modifiers(
+  monkeypatch: pytest.MonkeyPatch,
+  posted_text_events: list[tuple[int, int, str, int]],
+) -> None:
+  create_event = Quartz.CGEventCreateKeyboardEvent
+
+  def create(source: object, keycode: int, key_down: bool) -> object:
+    event: object = create_event(source, keycode, key_down)
+    Quartz.CGEventSetFlags(event, Quartz.kCGEventFlagMaskCommand)
+    return event
+
+  monkeypatch.setattr(Quartz, "CGEventCreateKeyboardEvent", create)
+
+  macos_input.type_text("a")
+
+  assert posted_text_events == [
+    (Quartz.kCGEventKeyDown, 1, "a", 0),
+    (Quartz.kCGEventKeyUp, 1, "a", 0),
+  ]
+
+
+@pytest.mark.parametrize("operation", ["press_keys", "type_text"])
 @pytest.mark.parametrize("failed_key_down", [True, False], ids=["down-fails", "up-fails"])
-def test_press_keys_rejects_event_creation_failure_before_posting(
+def test_keyboard_input_rejects_event_creation_failure_before_posting(
   monkeypatch: pytest.MonkeyPatch,
   posted_keyboard_events: list[tuple[int, int, int, int]],
   failed_key_down: bool,
+  operation: str,
 ) -> None:
   create_event = Quartz.CGEventCreateKeyboardEvent
 
@@ -201,6 +270,6 @@ def test_press_keys_rejects_event_creation_failure_before_posting(
   monkeypatch.setattr(Quartz, "CGEventCreateKeyboardEvent", create)
 
   with pytest.raises(RuntimeError, match="Could not create keyboard event"):
-    macos_input.press_keys("cmd+a")
+    getattr(macos_input, operation)("a")
 
   assert posted_keyboard_events == []
