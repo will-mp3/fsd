@@ -1,7 +1,10 @@
 import pytest
 
 Quartz = pytest.importorskip("Quartz", reason="macOS backend needs pyobjc")
-ApplicationServices = pytest.importorskip("ApplicationServices", reason="macOS backend needs pyobjc")
+ApplicationServices = pytest.importorskip(
+  "ApplicationServices",
+  reason="macOS backend needs pyobjc",
+)
 
 from fsd.platform.macos.permissions import check_permissions  # noqa: E402
 
