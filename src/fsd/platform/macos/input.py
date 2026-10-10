@@ -4,7 +4,7 @@ import time
 
 import Quartz
 
-from fsd.platform.base import parse_combo
+from fsd.platform.base import ScreenPoint, parse_combo
 
 _EVENT_GAP_SECONDS = 0.01
 
@@ -76,3 +76,45 @@ def type_text(text: str) -> None:
 
     for event in events:
       _post(event)
+
+
+def _mouse_event(event_type: int, point: ScreenPoint) -> object:
+  event: object | None = Quartz.CGEventCreateMouseEvent(
+    None, event_type, (point.x, point.y), Quartz.kCGMouseButtonLeft
+  )
+  if event is None:
+    raise RuntimeError("Could not create mouse event.")
+
+  # A plain click must not inherit modifiers such as Control.
+  Quartz.CGEventSetFlags(event, 0)
+  return event
+
+
+def click(point: ScreenPoint) -> None:
+  # Prepare the full action before moving or pressing the mouse.
+  events = (
+    _mouse_event(Quartz.kCGEventMouseMoved, point),
+    _mouse_event(Quartz.kCGEventLeftMouseDown, point),
+    _mouse_event(Quartz.kCGEventLeftMouseUp, point),
+  )
+
+  # Both button events belong to the same single click.
+  for event in events[1:]:
+    Quartz.CGEventSetIntegerValueField(event, Quartz.kCGMouseEventClickState, 1)
+
+  for event in events:
+    _post(event)
+
+
+def scroll(point: ScreenPoint, dx: int, dy: int) -> None:
+  move = _mouse_event(Quartz.kCGEventMouseMoved, point)
+  event = Quartz.CGEventCreateScrollWheelEvent(None, Quartz.kCGScrollEventUnitLine, 2, dy, dx)
+  if event is None:
+    raise RuntimeError("Could not create scroll event.")
+
+  Quartz.CGEventSetFlags(event, 0)
+  Quartz.CGEventSetLocation(event, (point.x, point.y))
+
+  # Scroll at the same point whose owner the action gate checked.
+  _post(move)
+  _post(event)
