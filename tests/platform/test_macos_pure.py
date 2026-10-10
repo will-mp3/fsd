@@ -103,3 +103,21 @@ def test_list_windows_handles_empty_native_results(
 ) -> None:
   _stub_window_query(monkeypatch, entries)
   assert macos_windows.list_windows() == []
+
+
+@pytest.mark.parametrize(
+  ("text", "expected"),
+  [
+    ("", 0),
+    ("abc", 3),
+    ("\u00e9", 1),
+    ("e\u0301", 2),
+    ("\U0001d11e", 2),
+    ("a\U0001d11eb", 4),
+  ],
+  ids=["empty", "ascii", "accented", "combining", "surrogate-pair", "mixed"],
+)
+def test_utf16_length_counts_code_units(text: str, expected: int) -> None:
+  from fsd.platform.macos.input import utf16_length
+
+  assert utf16_length(text) == expected
