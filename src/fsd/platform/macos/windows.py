@@ -8,6 +8,7 @@ from typing import Any
 import Quartz
 
 from fsd.platform.base import Rect, WindowInfo
+from fsd.platform.macos.apps import bundle_id_for_pid
 
 
 def window_from_entry(
@@ -32,3 +33,13 @@ def window_from_entry(
     ),
     int(entry.get(Quartz.kCGWindowLayer, 0)),
   )
+
+
+def list_windows() -> list[WindowInfo]:
+  # Excluding desktop elements leaves bare-desktop clicks without an approved owner.
+  entries = Quartz.CGWindowListCopyWindowInfo(
+    Quartz.kCGWindowListOptionOnScreenOnly | Quartz.kCGWindowListExcludeDesktopElements,
+    Quartz.kCGNullWindowID,
+  )
+  windows = (window_from_entry(entry, bundle_id_for_pid) for entry in entries or [])
+  return [window for window in windows if window is not None]
