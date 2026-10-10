@@ -40,6 +40,15 @@ def _post(event: object) -> None:
   time.sleep(_EVENT_GAP_SECONDS)
 
 
+def _keyboard_events(keycode: int) -> tuple[object, object]:
+  # Create the release event before sending the corresponding press.
+  down = Quartz.CGEventCreateKeyboardEvent(None, keycode, True)
+  up = Quartz.CGEventCreateKeyboardEvent(None, keycode, False)
+  if down is None or up is None:
+    raise RuntimeError("Could not create keyboard event.")
+  return down, up
+
+
 def press_keys(combo: str) -> None:
   parsed = parse_combo(combo)
   if parsed.key not in KEYCODES:
@@ -49,15 +58,21 @@ def press_keys(combo: str) -> None:
   for modifier in parsed.modifiers:
     flags |= _MODIFIER_FLAGS[modifier]
 
-  # Prepare both events before posting to avoid a partial keystroke
-  # if creation of the release event fails
-  events = [
-    Quartz.CGEventCreateKeyboardEvent(None, KEYCODES[parsed.key], key_down)
-    for key_down in (True, False)
-  ]
-  if any(event is None for event in events):
-    raise RuntimeError("Could not create keyboard event. No keys were sent.")
-
+  events = _keyboard_events(KEYCODES[parsed.key])
   for event in events:
     Quartz.CGEventSetFlags(event, flags)
     _post(event)
+
+
+def type_text(text: str) -> None:
+  for character in text:
+    events = _keyboard_events(0)
+    length = utf16_length(character)
+
+    for event in events:
+      # Literal text must not inherit shortcut modifiers
+      Quartz.CGEventSetFlags(event, 0)
+      Quartz.CGEventKeyboardSetUnicodeString(event, length, character)
+
+    for event in events:
+      _post(event)
