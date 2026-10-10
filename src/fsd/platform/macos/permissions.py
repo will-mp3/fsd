@@ -8,7 +8,7 @@ import Quartz
 from fsd.platform.base import MissingPermission
 
 _RESTART_NOTE = (
-  "Enable if for the terminal application that launches fsd, then quit and reopen that terminal."
+  "Enable it for the terminal application that launches fsd, then quit and reopen that terminal."
 )
 
 
