@@ -4,10 +4,11 @@ import threading
 from collections.abc import Callable, Collection
 from typing import Any
 
+import AppKit
 import Quartz
 import ScreenCaptureKit
 
-from fsd.platform.base import CaptureError
+from fsd.platform.base import CaptureError, Frame, Rect
 
 _TIMEOUT_SECONDS = 10.0
 
@@ -58,3 +59,23 @@ def _content_filter(content: Any, bundle_ids: Collection[str]) -> tuple[Any, int
     raise CaptureError("Could not create the capture filter.")
 
   return content_filter, main_display
+
+
+def _frame_from_image(image: Any, screen_rect: Rect) -> Frame:
+  if image is None:
+    raise CaptureError("Capture returned no image.")
+
+  representation = AppKit.NSBitmapImageRep.alloc().initWithCGImage_(image)
+  if representation is None:
+    raise CaptureError("The captured image could not be prepared for PNG encoding.")
+
+  png = representation.representationUsingType_properties_(AppKit.NSBitmapImageFileTypePNG, {})
+  if png is None:
+    raise CaptureError("The captured frame could not be encoded as PNG.")
+
+  return Frame(
+    png=bytes(png),
+    width=int(Quartz.CGImageGetWidth(image)),
+    height=int(Quartz.CGImageGetHeight(image)),
+    screen_rect=screen_rect,
+  )

@@ -1,3 +1,4 @@
+import struct
 import threading
 from collections.abc import Callable
 from types import ModuleType, SimpleNamespace
@@ -6,10 +7,11 @@ from typing import Any
 import pytest
 
 Foundation = pytest.importorskip("Foundation", reason="macOS backend needs pyobjc")
+AppKit = pytest.importorskip("AppKit", reason="macOS backend needs pyobjc")
 Quartz = pytest.importorskip("Quartz", reason="macOS backend needs pyobjc")
 ScreenCaptureKit = pytest.importorskip("ScreenCaptureKit", reason="macOS backend needs pyobjc")
 
-from fsd.platform.base import CaptureError  # noqa: E402
+from fsd.platform.base import CaptureError, Rect, ScreenPoint  # noqa: E402
 
 
 @pytest.fixture
@@ -152,3 +154,70 @@ def test_content_filter_reports_native_initialization_failure(
 
   with pytest.raises(CaptureError, match="Could not create the capture filter"):
     capture_module._content_filter(state.content, {"com.example.approved"})
+
+
+@pytest.fixture
+def native_image() -> object:
+  pixels = bytes([255, 0, 0, 255] * 8)
+  provider = Quartz.CGDataProviderCreateWithData(None, pixels, len(pixels), None)
+  image: object = Quartz.CGImageCreate(
+    4,
+    2,
+    8,
+    32,
+    16,
+    Quartz.CGColorSpaceCreateDeviceRGB(),
+    Quartz.kCGImageAlphaPremultipliedLast,
+    provider,
+    None,
+    False,
+    Quartz.kCGRenderingIntentDefault,
+  )
+  assert image is not None
+  return image
+
+
+def test_frame_from_image_encodes_png_and_preserves_pixel_and_screen_dimensions(
+  capture_module: ModuleType, native_image: object
+) -> None:
+  bounds = Rect(10, 20, 2, 1)
+
+  frame = capture_module._frame_from_image(native_image, bounds)
+
+  assert isinstance(frame.png, bytes)
+  assert frame.png[:8] == b"\x89PNG\r\n\x1a\n"
+  assert struct.unpack(">II", frame.png[16:24]) == (4, 2)
+  assert (frame.width, frame.height) == (4, 2)
+  assert frame.screen_rect == bounds
+  assert frame.to_screen(0.5, 0.5) == ScreenPoint(11, 20.5)
+
+
+def test_frame_from_image_rejects_missing_image(capture_module: ModuleType) -> None:
+  with pytest.raises(CaptureError, match="Capture returned no image"):
+    capture_module._frame_from_image(None, Rect(0, 0, 2, 1))
+
+
+@pytest.mark.parametrize(
+  ("stage", "message"),
+  [
+    ("representation", "could not be prepared for PNG encoding"),
+    ("png", "could not be encoded as PNG"),
+  ],
+)
+def test_frame_from_image_reports_encoding_failures(
+  monkeypatch: pytest.MonkeyPatch,
+  capture_module: ModuleType,
+  native_image: object,
+  stage: str,
+  message: str,
+) -> None:
+  representation = (
+    None
+    if stage == "representation"
+    else SimpleNamespace(representationUsingType_properties_=lambda *args: None)
+  )
+  builder = SimpleNamespace(initWithCGImage_=lambda image: representation)
+  monkeypatch.setattr(AppKit, "NSBitmapImageRep", SimpleNamespace(alloc=lambda: builder))
+
+  with pytest.raises(CaptureError, match=message):
+    capture_module._frame_from_image(native_image, Rect(0, 0, 2, 1))
