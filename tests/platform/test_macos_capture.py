@@ -221,3 +221,140 @@ def test_frame_from_image_reports_encoding_failures(
 
   with pytest.raises(CaptureError, match=message):
     capture_module._frame_from_image(native_image, Rect(0, 0, 2, 1))
+
+
+@pytest.fixture
+def capture_runtime(
+  monkeypatch: pytest.MonkeyPatch,
+  capture_selection: SimpleNamespace,
+  native_image: object,
+) -> SimpleNamespace:
+  state = capture_selection
+  state.content_result = state.content
+  state.content_error = None
+  state.image_result = native_image
+  state.image_error = None
+  state.mode = object()
+  state.content_queries = []
+  state.screenshots = []
+
+  def query(
+    exclude_desktop: bool, on_screen_only: bool, handler: Callable[[object, object], None]
+  ) -> None:
+    state.content_queries.append((exclude_desktop, on_screen_only))
+    handler(state.content_result, state.content_error)
+
+  def screenshot(
+    content_filter: object, configuration: object, handler: Callable[[object, object], None]
+  ) -> None:
+    state.screenshots.append((content_filter, configuration))
+    handler(state.image_result, state.image_error)
+
+  def bounds(display_id: int) -> object:
+    assert display_id == 42
+    return Quartz.CGRectMake(10, 20, 2, 1)
+
+  def mode(display_id: int) -> object | None:
+    assert display_id == 42
+    result: object | None = state.mode
+    return result
+
+  monkeypatch.setattr(
+    ScreenCaptureKit,
+    "SCShareableContent",
+    SimpleNamespace(
+      getShareableContentExcludingDesktopWindows_onScreenWindowsOnly_completionHandler_=query
+    ),
+  )
+  monkeypatch.setattr(
+    ScreenCaptureKit,
+    "SCScreenshotManager",
+    SimpleNamespace(captureImageWithFilter_configuration_completionHandler_=screenshot),
+  )
+  monkeypatch.setattr(Quartz, "CGDisplayBounds", bounds)
+  monkeypatch.setattr(Quartz, "CGDisplayCopyDisplayMode", mode)
+  monkeypatch.setattr(Quartz, "CGDisplayModeGetPixelWidth", lambda mode: 4)
+  monkeypatch.setattr(Quartz, "CGDisplayModeGetPixelHeight", lambda mode: 2)
+  return state
+
+
+@pytest.mark.parametrize("approved_ids", [{"com.example.approved"}, set()])
+def test_capture_uses_approval_filter_and_returns_frame_at_display_pixel_size(
+  capture_module: ModuleType, capture_runtime: SimpleNamespace, approved_ids: set[str]
+) -> None:
+  state = capture_runtime
+
+  frame = capture_module.capture(approved_ids)
+
+  expected_apps = [state.approved] if approved_ids else []
+  assert state.content_queries == [(True, True)]
+  assert state.calls == [(state.main, expected_apps, [])]
+  assert len(state.screenshots) == 1
+  content_filter, configuration = state.screenshots[0]
+  assert content_filter is state.result
+  assert (configuration.width(), configuration.height()) == (4, 2)
+  assert not configuration.showsCursor()
+  assert frame.png[:8] == b"\x89PNG\r\n\x1a\n"
+  assert struct.unpack(">II", frame.png[16:24]) == (4, 2)
+  assert (frame.width, frame.height) == (4, 2)
+  assert frame.screen_rect == Rect(10, 20, 2, 1)
+
+
+@pytest.mark.parametrize(
+  ("field", "message", "screenshot_count"),
+  [
+    ("content_result", "returned no capturable content", 0),
+    ("mode", "display mode is not available", 0),
+    ("image_result", "Capture returned no image", 1),
+  ],
+)
+def test_capture_reports_missing_native_results(
+  capture_module: ModuleType,
+  capture_runtime: SimpleNamespace,
+  field: str,
+  message: str,
+  screenshot_count: int,
+) -> None:
+  setattr(capture_runtime, field, None)
+
+  with pytest.raises(CaptureError, match=message):
+    capture_module.capture({"com.example.approved"})
+
+  assert len(capture_runtime.screenshots) == screenshot_count
+
+
+def test_capture_reports_configuration_failure_before_requesting_a_screenshot(
+  monkeypatch: pytest.MonkeyPatch, capture_module: ModuleType, capture_runtime: SimpleNamespace
+) -> None:
+  monkeypatch.setattr(
+    ScreenCaptureKit,
+    "SCStreamConfiguration",
+    SimpleNamespace(alloc=lambda: SimpleNamespace(init=lambda: None)),
+  )
+
+  with pytest.raises(CaptureError, match="Could not create the capture configuration"):
+    capture_module.capture({"com.example.approved"})
+
+  assert capture_runtime.screenshots == []
+
+
+@pytest.mark.parametrize(
+  ("field", "operation", "screenshot_count"),
+  [("content_error", "Listing capturable content", 0), ("image_error", "Capturing a frame", 1)],
+)
+def test_capture_propagates_errors_from_both_native_callbacks(
+  capture_module: ModuleType,
+  capture_runtime: SimpleNamespace,
+  field: str,
+  operation: str,
+  screenshot_count: int,
+) -> None:
+  error = Foundation.NSError.errorWithDomain_code_userInfo_(
+    "fsd.test", 1, {Foundation.NSLocalizedDescriptionKey: "Permission denied"}
+  )
+  setattr(capture_runtime, field, error)
+
+  with pytest.raises(CaptureError, match=f"{operation} failed: Permission denied"):
+    capture_module.capture({"com.example.approved"})
+
+  assert len(capture_runtime.screenshots) == screenshot_count

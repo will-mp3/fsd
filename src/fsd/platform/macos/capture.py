@@ -79,3 +79,49 @@ def _frame_from_image(image: Any, screen_rect: Rect) -> Frame:
     height=int(Quartz.CGImageGetHeight(image)),
     screen_rect=screen_rect,
   )
+
+
+def capture(bundle_ids: Collection[str]) -> Frame:
+  content = _wait_for(
+    lambda handler: (
+      ScreenCaptureKit.SCShareableContent.getShareableContentExcludingDesktopWindows_onScreenWindowsOnly_completionHandler_(  # noqa: E501
+        True, True, handler
+      )
+    ),
+    "Listing capturable content",
+  )
+  if content is None:
+    raise CaptureError("ScreenCaptureKit returned no capturable content.")
+
+  content_filter, main_display = _content_filter(content, bundle_ids)
+
+  bounds = Quartz.CGDisplayBounds(main_display)
+  mode = Quartz.CGDisplayCopyDisplayMode(main_display)
+  if mode is None:
+    raise CaptureError("The main display mode is not available.")
+
+  configuration = ScreenCaptureKit.SCStreamConfiguration.alloc().init()
+  if configuration is None:
+    raise CaptureError("Could not create the capture configuration.")
+
+  # Preserve pixel detail for later OCR and detection.
+  configuration.setWidth_(Quartz.CGDisplayModeGetPixelWidth(mode))
+  configuration.setHeight_(Quartz.CGDisplayModeGetPixelHeight(mode))
+  configuration.setShowsCursor_(False)
+
+  image = _wait_for(
+    lambda handler: (
+      ScreenCaptureKit.SCScreenshotManager.captureImageWithFilter_configuration_completionHandler_(  # noqa: E501
+        content_filter, configuration, handler
+      )
+    ),
+    "Capturing a frame",
+  )
+
+  screen_rect = Rect(
+    float(bounds.origin.x),
+    float(bounds.origin.y),
+    float(bounds.size.width),
+    float(bounds.size.height),
+  )
+  return _frame_from_image(image, screen_rect)
