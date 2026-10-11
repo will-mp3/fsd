@@ -55,7 +55,7 @@ class MacOSPlatform:
   def click(self, point: ScreenPoint) -> None:
     input.click(point)
 
-  def type_test(self, text: str) -> None:
+  def type_text(self, text: str) -> None:
     input.type_text(text)
 
   def press_keys(self, combo: str) -> None:
