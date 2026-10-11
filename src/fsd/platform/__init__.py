@@ -25,6 +25,6 @@ def select_backend() -> Platform:
     )
 
   # Imported here so the package stays importable where pyobjc is not installed
-  from fsd.platform.macos.backend import MacOSPlatform  # type: ignore[import-untyped]
+  from fsd.platform.macos.backend import MacOSPlatform
 
   return require_mandatory(MacOSPlatform())
