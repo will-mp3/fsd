@@ -294,6 +294,11 @@ def test_capture_uses_approval_filter_and_returns_frame_at_display_pixel_size(
   assert content_filter is state.result
   assert (configuration.width(), configuration.height()) == (4, 2)
   assert not configuration.showsCursor()
+  background = configuration.backgroundColor()
+  assert background is not None
+  assert Quartz.CGColorEqualToColor(
+    background, Quartz.CGColorGetConstantColor(Quartz.kCGColorBlack)
+  )
   assert frame.png[:8] == b"\x89PNG\r\n\x1a\n"
   assert struct.unpack(">II", frame.png[16:24]) == (4, 2)
   assert (frame.width, frame.height) == (4, 2)

@@ -108,6 +108,7 @@ def capture(bundle_ids: Collection[str]) -> Frame:
   configuration.setWidth_(Quartz.CGDisplayModeGetPixelWidth(mode))
   configuration.setHeight_(Quartz.CGDisplayModeGetPixelHeight(mode))
   configuration.setShowsCursor_(False)
+  configuration.setBackgroundColor_(Quartz.CGColorGetConstantColor(Quartz.kCGColorBlack))
 
   image = _wait_for(
     lambda handler: (
