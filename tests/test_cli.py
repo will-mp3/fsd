@@ -6,7 +6,7 @@ import pytest
 from fsd import cli
 from fsd.approval.store import ApprovalStore, ApprovalStoreError
 from fsd.cli import CliError, resolve_app
-from fsd.platform.base import AppInfo, MissingPermission
+from fsd.platform.base import AppInfo, MissingPermission, UnsupportedPlatformError
 from fsd.platform.fake import FakePlatform
 
 APPS = [
@@ -220,3 +220,139 @@ def test_toggle_failed_save_does_not_print_success(tmp_path: Path, approve: bool
   with pytest.raises(ApprovalStoreError, match="Could not write approvals"):
     cli._toggle(FakePlatform(apps=APPS), store, "Notes", approve, out)
   assert out.getvalue() == ""
+
+
+@pytest.mark.parametrize("missing", [False, True])
+def test_run_doctor_reports_status_without_loading_approvals(
+  tmp_path: Path, monkeypatch: pytest.MonkeyPatch, missing: bool
+) -> None:
+  monkeypatch.setenv("FSD_CONFIG_DIR", str(tmp_path))
+  (tmp_path / "approvals.json").write_text("invalid json", encoding="utf-8")
+  permissions = [MissingPermission("Screen Recording", "System Settings")] if missing else []
+  fake = FakePlatform(missing_permissions=permissions)
+  out, err = io.StringIO(), io.StringIO()
+  code = cli.run(["doctor"], backend_factory=lambda: fake, out=out, err=err)
+  assert code == (1 if missing else 0)
+  assert "Capabilities:" in out.getvalue()
+  assert err.getvalue() == ""
+
+
+def test_run_lists_apps_with_injected_store(store: ApprovalStore) -> None:
+  store.approve("com.apple.Notes")
+  out, err = io.StringIO(), io.StringIO()
+  code = cli.run(
+    ["apps", "list"],
+    backend_factory=lambda: FakePlatform(apps=APPS),
+    store=store,
+    out=out,
+    err=err,
+  )
+  assert code == 0
+  row = next(line for line in out.getvalue().splitlines() if "com.apple.Notes" in line)
+  assert row.startswith("approved")
+  assert err.getvalue() == ""
+
+
+@pytest.mark.parametrize("command", ["approve", "block"])
+def test_run_updates_default_store(
+  tmp_path: Path, monkeypatch: pytest.MonkeyPatch, command: str
+) -> None:
+  monkeypatch.setenv("FSD_CONFIG_DIR", str(tmp_path))
+  path = tmp_path / "approvals.json"
+  if command == "block":
+    ApprovalStore(path).approve("com.apple.Notes")
+  out, err = io.StringIO(), io.StringIO()
+  code = cli.run(
+    ["apps", command, "Notes"],
+    backend_factory=lambda: FakePlatform(apps=APPS),
+    out=out,
+    err=err,
+  )
+  assert code == 0
+  assert ApprovalStore(path).is_approved("com.apple.Notes") == (command == "approve")
+  verb = "Approved" if command == "approve" else "Blocked"
+  assert out.getvalue() == f"{verb} Notes (com.apple.Notes).\n"
+  assert err.getvalue() == ""
+
+
+@pytest.mark.parametrize("query", ["TextEdit", "Nonexistent"])
+def test_run_reports_resolution_errors_without_changing_approvals(
+  store: ApprovalStore, query: str
+) -> None:
+  out, err = io.StringIO(), io.StringIO()
+  code = cli.run(
+    ["apps", "approve", query],
+    backend_factory=lambda: FakePlatform(apps=APPS),
+    store=store,
+    out=out,
+    err=err,
+  )
+  assert code == 2
+  assert err.getvalue().startswith("fsd: ")
+  assert query in err.getvalue()
+  assert "Traceback" not in err.getvalue()
+  assert out.getvalue() == ""
+  assert store.approved() == frozenset()
+
+
+def test_run_reports_backend_selection_error() -> None:
+  def refuse() -> FakePlatform:
+    raise UnsupportedPlatformError("This backend is unavailable.")
+
+  out, err = io.StringIO(), io.StringIO()
+  assert cli.run(["doctor"], backend_factory=refuse, out=out, err=err) == 2
+  assert err.getvalue() == "fsd: This backend is unavailable.\n"
+  assert out.getvalue() == ""
+
+
+def test_run_reports_corrupt_default_store(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+  monkeypatch.setenv("FSD_CONFIG_DIR", str(tmp_path))
+  path = tmp_path / "approvals.json"
+  path.write_text("invalid json", encoding="utf-8")
+  out, err = io.StringIO(), io.StringIO()
+  code = cli.run(
+    ["apps", "list"],
+    backend_factory=FakePlatform,
+    out=out,
+    err=err,
+  )
+  assert code == 2
+  assert err.getvalue().startswith("fsd: ")
+  assert "unreadable" in err.getvalue()
+  assert "Traceback" not in err.getvalue()
+  assert out.getvalue() == ""
+  assert path.read_text(encoding="utf-8") == "invalid json"
+
+
+def test_run_reports_save_failure_without_success_message(tmp_path: Path) -> None:
+  parent = tmp_path / "config"
+  store = ApprovalStore(parent / "approvals.json")
+  parent.write_text("Not a directory.", encoding="utf-8")
+  out, err = io.StringIO(), io.StringIO()
+  code = cli.run(
+    ["apps", "approve", "Notes"],
+    backend_factory=lambda: FakePlatform(apps=APPS),
+    store=store,
+    out=out,
+    err=err,
+  )
+  assert code == 2
+  assert err.getvalue().startswith("fsd: Could not write approvals")
+  assert out.getvalue() == ""
+
+
+def test_run_defaults_to_standard_output(capsys: pytest.CaptureFixture[str]) -> None:
+  assert cli.run(["doctor"], backend_factory=FakePlatform) == 0
+  captured = capsys.readouterr()
+  assert "All required permissions are granted." in captured.out
+  assert captured.err == ""
+
+
+def test_run_help_does_not_construct_backend(capsys: pytest.CaptureFixture[str]) -> None:
+  def unexpected_backend() -> FakePlatform:
+    pytest.fail("Help must work without constructing a platform backend.")
+
+  with pytest.raises(SystemExit) as exc_info:
+    cli.run(["--help"], backend_factory=unexpected_backend)
+  assert exc_info.value.code == 0
+  assert "usage: fsd" in capsys.readouterr().out

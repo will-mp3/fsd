@@ -1,11 +1,13 @@
 """The fsd command line: environment checks and per-app approval."""
 
 import argparse
-from collections.abc import Sequence
+import sys
+from collections.abc import Callable, Sequence
 from typing import TextIO
 
-from fsd.approval.store import ApprovalStore
-from fsd.platform.base import AppInfo, Platform
+from fsd.approval.store import ApprovalStore, ApprovalStoreError, default_store_path
+from fsd.platform import select_backend
+from fsd.platform.base import AppInfo, Platform, PlatformError
 
 
 class CliError(Exception):
@@ -95,3 +97,32 @@ def _toggle(
   verb = "Approved" if approve else "Blocked"
   print(f"{verb} {app.name} ({app.bundle_id}).", file=out)
   return 0
+
+
+def run(
+  argv: Sequence[str] | None,
+  *,
+  backend_factory: Callable[[], Platform] = select_backend,
+  store: ApprovalStore | None = None,
+  out: TextIO | None = None,
+  err: TextIO | None = None,
+) -> int:
+  out = out if out is not None else sys.stdout
+  err = err if err is not None else sys.stderr
+  args = _build_parser().parse_args(argv)
+
+  try:
+    platform = backend_factory()
+    if args.command == "doctor":
+      return _doctor(platform, out)
+
+    if store is None:
+      store = ApprovalStore(default_store_path())
+
+    if args.apps_command == "list":
+      return _list_apps(platform, store, out)
+
+    return _toggle(platform, store, args.app, args.apps_command == "approve", out)
+  except (PlatformError, ApprovalStoreError, CliError) as exc:
+    print(f"fsd: {exc}", file=err)
+    return 2
