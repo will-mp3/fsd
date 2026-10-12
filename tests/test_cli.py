@@ -1,4 +1,6 @@
 import io
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -356,3 +358,29 @@ def test_run_help_does_not_construct_backend(capsys: pytest.CaptureFixture[str])
     cli.run(["--help"], backend_factory=unexpected_backend)
   assert exc_info.value.code == 0
   assert "usage: fsd" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+  ("argv", "expected_status"),
+  [(["--help"], 0), ([], 2), (["apps", "approve"], 2)],
+)
+def test_main_reads_process_arguments_and_exits_with_expected_status(
+  argv: list[str], expected_status: int
+) -> None:
+  result = subprocess.run(
+    [sys.executable, "-c", "from fsd.cli import main; main()", *argv],
+    capture_output=True,
+    text=True,
+    timeout=10,
+    check=False,
+  )
+  assert result.returncode == expected_status
+  if expected_status == 0:
+    assert "usage: fsd" in result.stdout
+    assert "doctor" in result.stdout
+    assert result.stderr == ""
+  else:
+    assert "usage: fsd" in result.stderr
+    assert "error:" in result.stderr
+    assert "Traceback" not in result.stderr
+    assert result.stdout == ""

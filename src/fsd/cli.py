@@ -126,3 +126,7 @@ def run(
   except (PlatformError, ApprovalStoreError, CliError) as exc:
     print(f"fsd: {exc}", file=err)
     return 2
+
+
+def main() -> None:
+  sys.exit(run(None))
