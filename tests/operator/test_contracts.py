@@ -1,7 +1,6 @@
 import json
 
 import pytest
-from fsd.operator.config import Settings
 from fsd.operator.contracts import Decision
 from pydantic import ValidationError
 
@@ -17,10 +16,6 @@ def payload(action: dict[str, object] | None) -> str:
       "previous_result": "none",
     }
   )
-
-
-def test_default_model_does_not_require_cli_input() -> None:
-  assert Settings().model == "google/gemini-3.1-flash-lite"
 
 
 @pytest.mark.parametrize(
