@@ -4,6 +4,7 @@ import argparse
 from collections.abc import Sequence
 from typing import TextIO
 
+from fsd.approval.store import ApprovalStore
 from fsd.platform.base import AppInfo, Platform
 
 
@@ -60,3 +61,22 @@ def _doctor(platform: Platform, out: TextIO) -> int:
     print(f"Missing permission: {permission.name}", file=out)
     print(f"  Grant it in: {permission.how_to_grant}", file=out)
   return 1
+
+
+def _list_apps(platform: Platform, store: ApprovalStore, out: TextIO) -> int:
+  apps = platform.list_apps()
+  name_width = max([len(app.name) for app in apps] + [len("NAME")])
+  id_width = max([len(app.bundle_id) for app in apps] + [len("BUNDLE ID")])
+
+  print(
+    f"{'STATE':<9} {'NAME':<{name_width}} {'BUNDLE ID':<{id_width}} NOTE",
+    file=out,
+  )
+  for app in apps:
+    state = "approved" if store.is_approved(app.bundle_id) else "blocked"
+    note = "system" if app.system_surface else ("running" if app.running else "")
+    print(
+      f"{state:<9} {app.name:<{name_width}} {app.bundle_id:<{id_width}} {note}",
+      file=out,
+    )
+  return 0

@@ -1,8 +1,10 @@
 import io
+from pathlib import Path
 
 import pytest
 
 from fsd import cli
+from fsd.approval.store import ApprovalStore
 from fsd.cli import CliError, resolve_app
 from fsd.platform.base import AppInfo, MissingPermission
 from fsd.platform.fake import FakePlatform
@@ -11,7 +13,13 @@ APPS = [
   AppInfo("com.apple.Notes", "Notes", running=False),
   AppInfo("com.apple.TextEdit", "TextEdit", running=True),
   AppInfo("com.example.TextEdit", "TextEdit", running=False),
+  AppInfo("com.apple.dock", "Dock", running=True, system_surface=True),
 ]
+
+
+@pytest.fixture
+def store(tmp_path: Path) -> ApprovalStore:
+  return ApprovalStore(tmp_path / "approvals.json")
 
 
 def test_resolve_exact_bundle_id_disambiguates_duplicate_names() -> None:
@@ -123,3 +131,35 @@ def test_doctor_reports_every_missing_permission_and_returns_one(count: int) -> 
     assert f"Missing permission: {permission.name}" in report
     assert f"Grant it in: {permission.how_to_grant}" in report
   assert "All required permissions are granted." not in report
+
+
+def test_list_apps_shows_every_app_blocked_by_default(store: ApprovalStore) -> None:
+  out = io.StringIO()
+  assert cli._list_apps(FakePlatform(apps=APPS), store, out) == 0
+  header, *rows = out.getvalue().splitlines()
+  assert header.split() == ["STATE", "NAME", "BUNDLE", "ID", "NOTE"]
+  assert len(rows) == len(APPS)
+  assert all(row.split()[0] == "blocked" for row in rows)
+  assert {row.split()[2] for row in rows} == {app.bundle_id for app in APPS}
+
+
+def test_list_apps_uses_bundle_id_approval_and_marks_running_and_system_apps(
+  store: ApprovalStore,
+) -> None:
+  store.approve("com.apple.TextEdit")
+  out = io.StringIO()
+  assert cli._list_apps(FakePlatform(apps=APPS), store, out) == 0
+  rows = [line.split() for line in out.getvalue().splitlines()[1:]]
+  by_id = {row[2]: row for row in rows}
+  assert by_id["com.apple.TextEdit"] == ["approved", "TextEdit", "com.apple.TextEdit", "running"]
+  assert by_id["com.example.TextEdit"] == ["blocked", "TextEdit", "com.example.TextEdit"]
+  assert by_id["com.apple.dock"] == ["blocked", "Dock", "com.apple.dock", "system"]
+  assert store.approved() == frozenset({"com.apple.TextEdit"})
+
+
+def test_list_apps_with_empty_inventory_prints_only_header(store: ApprovalStore) -> None:
+  out = io.StringIO()
+  assert cli._list_apps(FakePlatform(), store, out) == 0
+  lines = out.getvalue().splitlines()
+  assert len(lines) == 1
+  assert lines[0].split() == ["STATE", "NAME", "BUNDLE", "ID", "NOTE"]
