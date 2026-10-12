@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 
 from fsd import cli
-from fsd.approval.store import ApprovalStore
+from fsd.approval.store import ApprovalStore, ApprovalStoreError
 from fsd.cli import CliError, resolve_app
 from fsd.platform.base import AppInfo, MissingPermission
 from fsd.platform.fake import FakePlatform
@@ -163,3 +163,60 @@ def test_list_apps_with_empty_inventory_prints_only_header(store: ApprovalStore)
   lines = out.getvalue().splitlines()
   assert len(lines) == 1
   assert lines[0].split() == ["STATE", "NAME", "BUNDLE", "ID", "NOTE"]
+
+
+@pytest.mark.parametrize(
+  ("query", "bundle_id", "name"),
+  [
+    ("com.apple.Notes", "com.apple.Notes", "Notes"),
+    ("nOtEs", "com.apple.Notes", "Notes"),
+    ("com.apple.dock", "com.apple.dock", "Dock"),
+  ],
+)
+def test_toggle_approve_persists_resolved_app(
+  store: ApprovalStore, tmp_path: Path, query: str, bundle_id: str, name: str
+) -> None:
+  out = io.StringIO()
+  assert cli._toggle(FakePlatform(apps=APPS), store, query, True, out) == 0
+  assert store.approved() == frozenset({bundle_id})
+  assert ApprovalStore(tmp_path / "approvals.json").approved() == frozenset({bundle_id})
+  assert out.getvalue() == f"Approved {name} ({bundle_id}).\n"
+
+
+def test_toggle_block_persists_removal_and_preserves_other_approvals(
+  store: ApprovalStore, tmp_path: Path
+) -> None:
+  store.approve("com.apple.Notes")
+  store.approve("com.apple.TextEdit")
+  out = io.StringIO()
+  assert cli._toggle(FakePlatform(apps=APPS), store, "Notes", False, out) == 0
+  assert store.approved() == frozenset({"com.apple.TextEdit"})
+  assert ApprovalStore(tmp_path / "approvals.json").approved() == store.approved()
+  assert out.getvalue() == "Blocked Notes (com.apple.Notes).\n"
+
+
+@pytest.mark.parametrize("query", ["TextEdit", "Nonexistent"])
+@pytest.mark.parametrize("approve", [True, False])
+def test_toggle_invalid_target_leaves_approvals_unchanged(
+  store: ApprovalStore, tmp_path: Path, query: str, approve: bool
+) -> None:
+  store.approve("com.apple.Notes")
+  path = tmp_path / "approvals.json"
+  original = path.read_bytes()
+  out = io.StringIO()
+  with pytest.raises(CliError):
+    cli._toggle(FakePlatform(apps=APPS), store, query, approve, out)
+  assert store.approved() == frozenset({"com.apple.Notes"})
+  assert path.read_bytes() == original
+  assert out.getvalue() == ""
+
+
+@pytest.mark.parametrize("approve", [True, False])
+def test_toggle_failed_save_does_not_print_success(tmp_path: Path, approve: bool) -> None:
+  parent = tmp_path / "config"
+  store = ApprovalStore(parent / "approvals.json")
+  parent.write_text("A file prevents creation of the config directory.", encoding="utf-8")
+  out = io.StringIO()
+  with pytest.raises(ApprovalStoreError, match="Could not write approvals"):
+    cli._toggle(FakePlatform(apps=APPS), store, "Notes", approve, out)
+  assert out.getvalue() == ""

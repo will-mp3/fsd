@@ -80,3 +80,18 @@ def _list_apps(platform: Platform, store: ApprovalStore, out: TextIO) -> int:
       file=out,
     )
   return 0
+
+
+def _toggle(
+  platform: Platform, store: ApprovalStore, query: str, approve: bool, out: TextIO
+) -> int:
+  app = resolve_app(query, platform.list_apps())
+
+  if approve:
+    store.approve(app.bundle_id)
+  else:
+    store.block(app.bundle_id)
+
+  verb = "Approved" if approve else "Blocked"
+  print(f"{verb} {app.name} ({app.bundle_id}).", file=out)
+  return 0
