@@ -9,6 +9,8 @@ dependencies = [
     "pyobjc-framework-Quartz>=12.0; sys_platform == 'darwin'",
     "pyobjc-framework-ScreenCaptureKit>=12.0; sys_platform == 'darwin'",
     "pyobjc-framework-ApplicationServices>=12.0; sys_platform == 'darwin'",
+    "httpx>=0.28,<1",
+    "pydantic>=2.12,<3",
 ]
 
 [project.scripts]

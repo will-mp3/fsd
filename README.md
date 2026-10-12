@@ -2,11 +2,19 @@
 
 Full Self Driving, not for vehicle use.
 
-A macOS computer-use harness project for operating desktop applications from
-pixels under per-application approval. The current CLI checks the environment,
-lists applications, and manages persisted approvals.
+A macOS computer-use harness for a vision-capable agent, aiming to understand
+and operate varied on-screen environments from pixels under per-application
+approval. The current CLI checks the environment, lists applications, and
+manages persisted approvals; the agent loop is not yet implemented.
 
-Design: [computer-use harness specification](docs/the-ark/specs/2026-10-03-computer-use-harness-design.md).
+Current design: [hosted vision operator](docs/the-ark/specs/2026-10-11-hosted-vision-operator-design.md).
+Implementation: [Plan 2](docs/the-ark/plans/2026-10-11-hosted-vision-operator.md) (not yet implemented).
+The first pass will use one hosted vision-language model; OpenRouter is the
+initial integration target. The model is set in internal configuration, so the
+planned command is simply `fsd chat`. OCR, detectors, and separate decision models
+are optional optimizations to evaluate after establishing the baseline.
+
+Foundation and historical architecture: [original specification](docs/the-ark/specs/2026-10-03-computer-use-harness-design.md).
 
 ## Requirements
 

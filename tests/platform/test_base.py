@@ -58,6 +58,12 @@ def test_parse_combo_rejects_malformed_input(combo: str) -> None:
     parse_combo(combo)
 
 
+@pytest.mark.parametrize("combo", ["banana", "cmd+banana", "f13"])
+def test_parse_combo_rejects_unsupported_keys(combo: str) -> None:
+  with pytest.raises(ValueError, match="Unknown key"):
+    parse_combo(combo)
+
+
 def test_topmost_owner_returns_first_window_containing_the_point() -> None:
   windows = [
     WindowInfo("com.example.top", Rect(0, 0, 100, 100), 0),

@@ -19,6 +19,37 @@ MANDATORY_CAPABILITIES = frozenset({Capability.FILTERED_CAPTURE, Capability.WIND
 
 MODIFIERS = frozenset({"cmd", "shift", "alt", "ctrl"})
 
+MAX_HOLD_MS = 1000
+SUPPORTED_KEYS = frozenset("abcdefghijklmnopqrstuvwxyz0123456789") | frozenset(
+  {
+    "=",
+    "-",
+    "[",
+    "]",
+    "'",
+    ";",
+    "\\",
+    ",",
+    "/",
+    ".",
+    "`",
+    "return",
+    "tab",
+    "space",
+    "delete",
+    "escape",
+    "home",
+    "pageup",
+    "forwarddelete",
+    "end",
+    "pagedown",
+    "left",
+    "right",
+    "up",
+    "down",
+  }
+)
+
 
 class PlatformError(Exception):
   """A platform operation failed; the message is safe to show to the user."""
@@ -115,6 +146,9 @@ def parse_combo(combo: str) -> KeyCombo:
     )
   if key in MODIFIERS:
     raise ValueError(f"Key combination {combo!r} has no non-modifier key.")
+
+  if key not in SUPPORTED_KEYS:
+    raise ValueError(f"Unknown key '{key}' in key combination {combo!r}.")
 
   return KeyCombo(frozenset(modifiers), key)
 
