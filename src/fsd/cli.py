@@ -2,8 +2,9 @@
 
 import argparse
 from collections.abc import Sequence
+from typing import TextIO
 
-from fsd.platform.base import AppInfo
+from fsd.platform.base import AppInfo, Platform
 
 
 class CliError(Exception):
@@ -44,3 +45,18 @@ def _build_parser() -> argparse.ArgumentParser:
     command.add_argument("app", help="bundle identifier or display name")
 
   return parser
+
+
+def _doctor(platform: Platform, out: TextIO) -> int:
+  capabilities = ", ".join(sorted(capability.value for capability in platform.capabilities))
+  print(f"Capabilities: {capabilities}", file=out)
+
+  missing = platform.check_permissions()
+  if not missing:
+    print("All required permissions are granted.", file=out)
+    return 0
+
+  for permission in missing:
+    print(f"Missing permission: {permission.name}", file=out)
+    print(f"  Grant it in: {permission.how_to_grant}", file=out)
+  return 1

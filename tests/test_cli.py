@@ -1,8 +1,11 @@
+import io
+
 import pytest
 
 from fsd import cli
 from fsd.cli import CliError, resolve_app
-from fsd.platform.base import AppInfo
+from fsd.platform.base import AppInfo, MissingPermission
+from fsd.platform.fake import FakePlatform
 
 APPS = [
   AppInfo("com.apple.Notes", "Notes", running=False),
@@ -91,3 +94,32 @@ def test_parser_help_lists_commands_and_exits_successfully(
   assert "doctor" in captured.out
   assert "apps" in captured.out
   assert captured.err == ""
+
+
+def test_doctor_reports_capabilities_and_success_to_supplied_stream(
+  capsys: pytest.CaptureFixture[str],
+) -> None:
+  out = io.StringIO()
+  code = cli._doctor(FakePlatform(), out)
+  assert code == 0
+  assert "Capabilities: filtered_capture, window_owner_lookup" in out.getvalue()
+  assert "All required permissions are granted." in out.getvalue()
+  captured = capsys.readouterr()
+  assert captured.out == ""
+  assert captured.err == ""
+
+
+@pytest.mark.parametrize("count", [1, 2])
+def test_doctor_reports_every_missing_permission_and_returns_one(count: int) -> None:
+  permissions = [
+    MissingPermission("Screen Recording", "System Settings > Privacy > Screen Recording"),
+    MissingPermission("Accessibility", "System Settings > Privacy > Accessibility"),
+  ][:count]
+  out = io.StringIO()
+  code = cli._doctor(FakePlatform(missing_permissions=permissions), out)
+  assert code == 1
+  report = out.getvalue()
+  for permission in permissions:
+    assert f"Missing permission: {permission.name}" in report
+    assert f"Grant it in: {permission.how_to_grant}" in report
+  assert "All required permissions are granted." not in report
