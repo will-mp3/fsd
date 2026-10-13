@@ -1,6 +1,7 @@
 import asyncio
 
 import pytest
+
 from fsd.operator.control import Control, RunCancelled, controlled
 
 
@@ -32,5 +33,38 @@ def test_request_has_a_total_deadline() -> None:
   async def scenario() -> None:
     with pytest.raises(TimeoutError):
       await controlled(asyncio.sleep(30), Control(), 0.01)
+
+  asyncio.run(scenario())
+
+
+def test_completed_response_is_discarded_when_cancelled() -> None:
+  async def scenario() -> None:
+    control = Control()
+
+    async def complete_and_cancel() -> str:
+      control.cancel()
+      return "late response"
+
+    with pytest.raises(RunCancelled):
+      await controlled(complete_and_cancel(), control, 1)
+
+  asyncio.run(scenario())
+
+
+def test_successful_response_reaches_the_caller() -> None:
+  async def scenario() -> None:
+    result = await controlled(asyncio.sleep(0, result="response"), Control(), 1)
+    assert result == "response"
+
+  asyncio.run(scenario())
+
+
+def test_operation_error_reaches_the_caller() -> None:
+  async def scenario() -> None:
+    async def fail() -> None:
+      raise ValueError("Invalid response")
+
+    with pytest.raises(ValueError, match="Invalid response"):
+      await controlled(fail(), Control(), 1)
 
   asyncio.run(scenario())
