@@ -1,10 +1,13 @@
 """Keyboard and mouse input helpers for macOS."""
 
 import time
+from collections.abc import Callable
+from functools import partial
 
 import Quartz
 
 from fsd.platform.base import ScreenPoint, parse_combo
+from fsd.platform.held_input import held_input
 
 _EVENT_GAP_SECONDS = 0.01
 
@@ -76,6 +79,25 @@ def type_text(text: str) -> None:
 
     for event in events:
       _post(event)
+
+
+def type_text_checked(text: str, check: Callable[[], None]) -> None:
+  for character in text:
+    down, up = _keyboard_events(0)
+    for event in (down, up):
+      Quartz.CGEventSetFlags(event, 0)
+      Quartz.CGEventKeyboardSetUnicodeString(event, utf16_length(character), character)
+    held_input(partial(_post, down), partial(_post, up), 1, check)
+
+
+def hold_key(key: str, duration_ms: int, check: Callable[[], None]) -> None:
+  parsed = parse_combo(key)
+  if parsed.modifiers or parsed.key not in KEYCODES:
+    raise ValueError("Hold requires one supported ordinary key")
+  down, up = _keyboard_events(KEYCODES[parsed.key])
+  for event in (down, up):
+    Quartz.CGEventSetFlags(event, 0)
+  held_input(partial(_post, down), partial(_post, up), duration_ms, check)
 
 
 def _mouse_event(event_type: int, point: ScreenPoint) -> object:

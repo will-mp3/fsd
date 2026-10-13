@@ -2,7 +2,7 @@ import pytest
 
 Quartz = pytest.importorskip("Quartz", reason="macOS backend needs pyobjc")
 
-from fsd.platform.base import ScreenPoint  # noqa: E402
+from fsd.platform.base import SUPPORTED_KEYS, ScreenPoint  # noqa: E402
 from fsd.platform.macos import input as macos_input  # noqa: E402
 
 
@@ -126,4 +126,62 @@ def test_pointer_actions_clear_inherited_modifiers(
     macos_input.scroll(point, 1, -2)
 
   assert posted_events
+  assert all(Quartz.CGEventGetFlags(event) == 0 for event in posted_events)
+
+
+def test_hold_posts_matching_key_events_and_releases_on_failure(
+  posted_events: list[object],
+) -> None:
+  checks = 0
+
+  def check() -> None:
+    nonlocal checks
+    checks += 1
+    if checks == 2:
+      raise RuntimeError("cancel")
+
+  with pytest.raises(RuntimeError, match="cancel"):
+    macos_input.hold_key("right", 100, check)
+
+  assert [Quartz.CGEventGetType(event) for event in posted_events] == [
+    Quartz.kCGEventKeyDown,
+    Quartz.kCGEventKeyUp,
+  ]
+  assert all(
+    Quartz.CGEventGetIntegerValueField(event, Quartz.kCGKeyboardEventKeycode) == 124
+    for event in posted_events
+  )
+  assert all(Quartz.CGEventGetFlags(event) == 0 for event in posted_events)
+
+
+def test_native_key_vocabulary_matches_portable_contract() -> None:
+  assert set(macos_input.KEYCODES) == SUPPORTED_KEYS
+
+
+@pytest.mark.parametrize(
+  ("key", "message"),
+  [("banana", "Unknown key"), ("cmd+a", "ordinary key")],
+)
+def test_unsupported_hold_never_posts_input(
+  posted_events: list[object], key: str, message: str
+) -> None:
+  with pytest.raises(ValueError, match=message):
+    macos_input.hold_key(key, 100, lambda: None)
+  assert posted_events == []
+
+
+def test_checked_typing_releases_current_character_and_stops_on_cancellation(
+  posted_events: list[object],
+) -> None:
+  def check() -> None:
+    if posted_events:
+      raise RuntimeError("cancel")
+
+  with pytest.raises(RuntimeError, match="cancel"):
+    macos_input.type_text_checked("ab", check)
+
+  assert [Quartz.CGEventGetType(event) for event in posted_events] == [
+    Quartz.kCGEventKeyDown,
+    Quartz.kCGEventKeyUp,
+  ]
   assert all(Quartz.CGEventGetFlags(event) == 0 for event in posted_events)
