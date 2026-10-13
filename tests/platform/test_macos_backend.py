@@ -77,3 +77,26 @@ def test_window_owner_lookup_observes_changes_between_calls(
   desktop.insert(0, WindowInfo("com.example.new-frontmost", Rect(0, 0, 500, 500), 0))
 
   assert backend.window_owner_at(point) == "com.example.new-frontmost"
+
+
+@pytest.mark.parametrize("operation", ["type_text_checked", "hold_key"])
+def test_checked_keyboard_refusal_reaches_caller_without_posting_input(
+  backend: Platform, monkeypatch: pytest.MonkeyPatch, operation: str
+) -> None:
+  refusal = RuntimeError("input refused")
+
+  def refuse() -> None:
+    raise refusal
+
+  def unexpected_post(tap: int, event: object) -> None:
+    pytest.fail("Input was posted despite the guard refusing it")
+
+  monkeypatch.setattr(Quartz, "CGEventPost", unexpected_post)
+
+  with pytest.raises(RuntimeError, match="input refused") as caught:
+    if operation == "type_text_checked":
+      backend.type_text_checked("example", refuse)
+    else:
+      backend.hold_key("right", 100, refuse)
+
+  assert caught.value is refusal

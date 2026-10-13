@@ -1,6 +1,6 @@
 """The macOS implementation of the platform contract."""
 
-from collections.abc import Collection
+from collections.abc import Callable, Collection
 
 import Quartz
 
@@ -57,6 +57,12 @@ class MacOSPlatform:
 
   def type_text(self, text: str) -> None:
     input.type_text(text)
+
+  def type_text_checked(self, text: str, check: Callable[[], None]) -> None:
+    input.type_text_checked(text, check)
+
+  def hold_key(self, key: str, duration_ms: int, check: Callable[[], None]) -> None:
+    input.hold_key(key, duration_ms, check)
 
   def press_keys(self, combo: str) -> None:
     input.press_keys(combo)
