@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Collection, Sequence
+from collections.abc import Callable, Collection, Sequence
 from dataclasses import dataclass
 from enum import Enum
 from typing import Protocol
@@ -181,6 +181,10 @@ class Platform(Protocol):
   def click(self, point: ScreenPoint) -> None: ...
 
   def type_text(self, text: str) -> None: ...
+
+  def type_text_checked(self, text: str, check: Callable[[], None]) -> None: ...
+
+  def hold_key(self, key: str, duration_ms: int, check: Callable[[], None]) -> None: ...
 
   def press_keys(self, combo: str) -> None: ...
 
