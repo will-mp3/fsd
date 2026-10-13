@@ -37,6 +37,23 @@ def test_request_has_a_total_deadline() -> None:
   asyncio.run(scenario())
 
 
+def test_completed_response_after_deadline_is_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
+  async def scenario() -> None:
+    now = 0.0
+
+    async def complete_after_deadline() -> str:
+      nonlocal now
+      now = 2.0
+      return "late response"
+
+    with monkeypatch.context() as patch:
+      patch.setattr(asyncio.get_running_loop(), "time", lambda: now)
+      with pytest.raises(TimeoutError):
+        await controlled(complete_after_deadline(), Control(), 1)
+
+  asyncio.run(scenario())
+
+
 def test_completed_response_is_discarded_when_cancelled() -> None:
   async def scenario() -> None:
     control = Control()

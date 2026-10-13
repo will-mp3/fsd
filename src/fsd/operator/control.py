@@ -19,7 +19,7 @@ class Control:
       raise RunCancelled("Run cancelled")
 
 
-def _consume_result(task: asyncio.Future[object]) -> None:
+def _consume_result[T](task: asyncio.Future[T]) -> None:
   if not task.cancelled():
     task.exception()
 
@@ -37,6 +37,8 @@ async def controlled[T](work: Awaitable[T], control: Control, timeout: float) ->
       done, _ = await asyncio.wait({task}, timeout=min(0.02, remaining))
 
       control.check()
+      if asyncio.get_running_loop().time() >= deadline:
+        raise TimeoutError("Operation exceeded its deadline")
       if done:
         return task.result()
   finally:
