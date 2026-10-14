@@ -34,6 +34,9 @@ class ApprovalStore:
   def approved(self) -> frozenset[str]:
     return frozenset(self._approved)
 
+  def refresh(self) -> None:
+    self._approved = self._load()
+
   def approve(self, bundle_id: str) -> None:
     self._save(self._approved | {bundle_id})
 

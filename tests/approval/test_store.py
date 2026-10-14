@@ -101,6 +101,41 @@ def test_blocking_an_unknown_app_is_harmless(tmp_path: Path) -> None:
   assert ApprovalStore(path).approved() == frozenset()
 
 
+def test_refresh_observes_external_revocation(tmp_path: Path) -> None:
+  path = tmp_path / "approvals.json"
+  store = ApprovalStore(path)
+  store.approve("one")
+  store.approve("two")
+  ApprovalStore(path).block("one")
+
+  store.refresh()
+
+  assert store.approved() == frozenset({"two"})
+
+
+def test_refresh_missing_file_clears_previous_approvals(tmp_path: Path) -> None:
+  path = tmp_path / "approvals.json"
+  store = ApprovalStore(path)
+  store.approve("one")
+  path.unlink()
+
+  store.refresh()
+
+  assert store.approved() == frozenset()
+
+
+def test_refresh_reports_corrupt_data_without_overwriting_it(tmp_path: Path) -> None:
+  path = tmp_path / "approvals.json"
+  store = ApprovalStore(path)
+  store.approve("one")
+  path.write_text("invalid json", encoding="utf-8")
+
+  with pytest.raises(ApprovalStoreError):
+    store.refresh()
+
+  assert path.read_text(encoding="utf-8") == "invalid json"
+
+
 def test_saved_format_is_versioned_sorted_and_has_no_duplicates(tmp_path: Path) -> None:
   path = tmp_path / "approvals.json"
   store = ApprovalStore(path)
