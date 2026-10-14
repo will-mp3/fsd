@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 from collections import deque
-from collections.abc import Collection, Iterable
+from collections.abc import Callable, Collection, Iterable
 
 from fsd.platform.base import (
   MANDATORY_CAPABILITIES,
+  MAX_HOLD_MS,
   AppInfo,
   Capability,
   CaptureError,
@@ -65,6 +66,19 @@ class FakePlatform:
 
   def type_text(self, text: str) -> None:
     self.actions.append(("type_text", text))
+
+  def type_text_checked(self, text: str, check: Callable[[], None]) -> None:
+    for character in text:
+      check()
+      self.actions.append(("type_character", character))
+
+  def hold_key(self, key: str, duration_ms: int, check: Callable[[], None]) -> None:
+    parsed = parse_combo(key)
+    if parsed.modifiers or type(duration_ms) is not int or not 0 < duration_ms <= MAX_HOLD_MS:
+      raise ValueError("Invalid key hold")
+    check()
+    self.actions.append(("hold_key", parsed.key, duration_ms))
+    check()
 
   def press_keys(self, combo: str) -> None:
     # Validate as a real backend would, so tests catch malformed combinations.

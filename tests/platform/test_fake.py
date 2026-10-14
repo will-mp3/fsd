@@ -1,6 +1,6 @@
 import pytest
 
-from fsd.platform.base import CaptureError, Frame, Rect, ScreenPoint, WindowInfo
+from fsd.platform.base import MAX_HOLD_MS, CaptureError, Frame, Rect, ScreenPoint, WindowInfo
 from fsd.platform.fake import FakePlatform
 
 
@@ -53,3 +53,78 @@ def test_window_owner_uses_front_to_back_order() -> None:
   )
   assert fake.window_owner_at(ScreenPoint(50, 50)) == "com.example.top"
   assert fake.window_owner_at(ScreenPoint(300, 300)) == "com.example.under"
+
+
+def test_checked_typing_records_each_character() -> None:
+  fake = FakePlatform()
+  fake.type_text_checked("ab", lambda: None)
+  assert fake.actions == [("type_character", "a"), ("type_character", "b")]
+
+
+def test_checked_typing_stops_before_next_character_when_guard_refuses() -> None:
+  fake = FakePlatform()
+
+  def check() -> None:
+    if fake.actions:
+      raise RuntimeError("cancelled")
+
+  with pytest.raises(RuntimeError, match="cancelled"):
+    fake.type_text_checked("ab", check)
+  assert fake.actions == [("type_character", "a")]
+
+
+@pytest.mark.parametrize("operation", ["type_text_checked", "hold_key"])
+def test_checked_input_initial_refusal_records_nothing(operation: str) -> None:
+  fake = FakePlatform()
+
+  def refuse() -> None:
+    raise RuntimeError("refused")
+
+  with pytest.raises(RuntimeError, match="refused"):
+    if operation == "type_text_checked":
+      fake.type_text_checked("ab", refuse)
+    else:
+      fake.hold_key("right", 100, refuse)
+  assert fake.actions == []
+
+
+@pytest.mark.parametrize("duration_ms", [1, MAX_HOLD_MS])
+def test_hold_records_normalized_key_and_duration(duration_ms: int) -> None:
+  fake = FakePlatform()
+  fake.hold_key("RIGHT", duration_ms, lambda: None)
+  assert fake.actions == [("hold_key", "right", duration_ms)]
+
+
+def test_hold_propagates_refusal_after_recording() -> None:
+  fake = FakePlatform()
+
+  def check() -> None:
+    if fake.actions:
+      raise RuntimeError("cancelled")
+
+  with pytest.raises(RuntimeError, match="cancelled"):
+    fake.hold_key("right", 100, check)
+  assert fake.actions == [("hold_key", "right", 100)]
+
+
+@pytest.mark.parametrize(
+  ("key", "duration_ms"),
+  [
+    ("banana", 100),
+    ("cmd+a", 100),
+    ("right", 0),
+    ("right", -1),
+    ("right", MAX_HOLD_MS + 1),
+    ("right", True),
+    ("right", 1.5),
+  ],
+)
+def test_invalid_hold_never_checks_or_records(key: str, duration_ms: int) -> None:
+  fake = FakePlatform()
+
+  def unexpected_check() -> None:
+    pytest.fail("Invalid input should be rejected before consulting the guard")
+
+  with pytest.raises(ValueError):
+    fake.hold_key(key, duration_ms, unexpected_check)
+  assert fake.actions == []
