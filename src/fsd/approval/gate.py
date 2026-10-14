@@ -1,5 +1,7 @@
 """The action gate: the only path from the harness to real input"""
 
+from collections.abc import Callable
+
 from fsd.approval.store import ApprovalStore
 from fsd.platform.base import Platform, ScreenPoint
 
@@ -38,6 +40,30 @@ class ActionGate:
   def press_keys(self, combo: str) -> None:
     self._require_keyboard_target("key press")
     self._platform.press_keys(combo)
+
+  def type_text_checked(self, text: str, check: Callable[[], None] | None = None) -> None:
+    self._platform.type_text_checked(text, self._keyboard_guard("type", check))
+
+  def hold_key(self, key: str, duration_ms: int, check: Callable[[], None] | None = None) -> None:
+    self._platform.hold_key(key, duration_ms, self._keyboard_guard("hold", check))
+
+  def _keyboard_guard(self, action: str, check: Callable[[], None] | None) -> Callable[[], None]:
+    if check is not None:
+      check()
+    self._store.refresh()
+    owner = self._platform.frontmost_app()
+    self._require_approved(action, owner)
+
+    def guard() -> None:
+      if check is not None:
+        check()
+      self._store.refresh()
+      current = self._platform.frontmost_app()
+      if current != owner:
+        raise GateRefused(action, current)
+      self._require_approved(action, current)
+
+    return guard
 
   def _require_pointer_target(self, action: str, point: ScreenPoint) -> None:
     self._require_approved(action, self._platform.window_owner_at(point))
