@@ -1,8 +1,51 @@
 import base64
+from typing import Protocol
+
+from pydantic import BaseModel, ConfigDict, Field
 
 from fsd.operator.config import Settings
 from fsd.operator.context import SYSTEM_PROMPT, Observation
-from fsd.operator.contracts import Decision
+from fsd.operator.contracts import Decision, ModelResult
+from fsd.operator.control import Control
+
+
+class InferenceError(Exception):
+  pass
+
+
+class InvalidDecision(InferenceError):
+  pass
+
+
+class DecisionClient(Protocol):
+  async def decide(
+    self,
+    observation: Observation,
+    control: Control,
+    correction: str = "",
+  ) -> ModelResult: ...
+
+
+class Message(BaseModel):
+  content: str | None = None
+
+
+class Choice(BaseModel):
+  message: Message
+  finish_reason: str | None = None
+
+
+class Usage(BaseModel):
+  model_config = ConfigDict(allow_inf_nan=False)
+
+  prompt_tokens: int = Field(default=0, ge=0)
+  completion_tokens: int = Field(default=0, ge=0)
+  cost: float | None = Field(default=0, ge=0)
+
+
+class Envelope(BaseModel):
+  choices: list[Choice]
+  usage: Usage | None = None
 
 
 def request_body(
