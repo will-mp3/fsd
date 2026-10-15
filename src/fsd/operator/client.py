@@ -174,6 +174,7 @@ class OpenRouterClient:
             cost=usage.cost,
           )
 
-      await controlled(asyncio.sleep(0.25 * 2**attempt), control, 2)
+      delay = min(0.25 * 2**attempt, 1.0)
+      await controlled(asyncio.sleep(delay), control, 2)
 
     raise InferenceError("Inference did not produce a response.")
