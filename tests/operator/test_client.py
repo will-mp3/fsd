@@ -21,6 +21,18 @@ def response_body(content: str) -> dict[str, object]:
   }
 
 
+@pytest.mark.parametrize(
+  ("payload", "expected"),
+  [({}, None), ({"prompt_tokens": 100}, None), ({"cost": 0}, 0.0)],
+)
+def test_usage_distinguishes_unreported_cost_from_free(
+  payload: dict[str, object], expected: float | None
+) -> None:
+  from fsd.operator.client import Usage
+
+  assert Usage.model_validate(payload).cost == expected
+
+
 @pytest.mark.parametrize("with_previous", [False, True])
 @pytest.mark.parametrize("correction", ["", "Return a valid decision."])
 def test_request_body_labels_images_and_requires_schema(

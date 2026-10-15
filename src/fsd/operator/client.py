@@ -40,7 +40,7 @@ class Usage(BaseModel):
 
   prompt_tokens: int = Field(default=0, ge=0)
   completion_tokens: int = Field(default=0, ge=0)
-  cost: float | None = Field(default=0, ge=0)
+  cost: float | None = Field(default=None, ge=0)
 
 
 class Envelope(BaseModel):
