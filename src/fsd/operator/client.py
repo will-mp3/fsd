@@ -1,12 +1,15 @@
+import asyncio
 import base64
+import time
 from typing import Protocol
 
-from pydantic import BaseModel, ConfigDict, Field
+import httpx
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from fsd.operator.config import Settings
 from fsd.operator.context import SYSTEM_PROMPT, Observation
 from fsd.operator.contracts import Decision, ModelResult
-from fsd.operator.control import Control
+from fsd.operator.control import Control, controlled
 
 
 class InferenceError(Exception):
@@ -91,3 +94,86 @@ def request_body(
       },
     },
   }
+
+
+class OpenRouterClient:
+  def __init__(
+    self,
+    http: httpx.AsyncClient,
+    api_key: str,
+    settings: Settings,
+  ) -> None:
+    self._http = http
+    self._key = api_key
+    self._settings = settings
+
+  async def decide(
+    self,
+    observation: Observation,
+    control: Control,
+    correction: str = "",
+  ) -> ModelResult:
+    started = time.monotonic()
+    body = request_body(observation, self._settings, correction)
+
+    for attempt in range(self._settings.retries + 1):
+      control.check()
+      try:
+        response = await controlled(
+          self._http.post(
+            self._settings.api_url,
+            json=body,
+            headers={"Authorization": f"Bearer {self._key}"},
+            timeout=self._settings.request_seconds,
+          ),
+          control,
+          self._settings.request_seconds,
+        )
+      except (httpx.RequestError, TimeoutError):
+        if attempt == self._settings.retries:
+          raise InferenceError(
+            "Inference connection timed out or failed; no action performed."
+          ) from None
+      else:
+        if response.status_code in {401, 403}:
+          raise InferenceError("OpenRouter rejected the API key or access permissions.")
+        if response.status_code == 402:
+          raise InferenceError("OpenRouter credits are exhausted.")
+
+        if response.status_code == 429 or response.status_code >= 500:
+          if attempt == self._settings.retries:
+            raise InferenceError("Inference provider remained unavailable after bounded retries.")
+        elif response.is_error:
+          raise InferenceError(
+            f"Provider rejected the request (HTTP {response.status_code}); "
+            "check model/schema support."
+          )
+        else:
+          try:
+            envelope = Envelope.model_validate_json(response.content)
+            if not envelope.choices or envelope.choices[0].finish_reason != "stop":
+              raise ValueError("Incomplete response")
+
+            content = envelope.choices[0].message.content
+            if content is None:
+              raise ValueError("No decision")
+
+            decision = Decision.model_validate_json(content)
+          except (ValidationError, ValueError):
+            raise InvalidDecision(
+              "Model returned an invalid or incomplete action response."
+            ) from None
+
+          control.check()
+          usage = envelope.usage or Usage()
+          return ModelResult(
+            decision=decision,
+            request_seconds=time.monotonic() - started,
+            input_tokens=usage.prompt_tokens,
+            output_tokens=usage.completion_tokens,
+            cost=usage.cost,
+          )
+
+      await controlled(asyncio.sleep(0.25 * 2**attempt), control, 2)
+
+    raise InferenceError("Inference did not produce a response.")
