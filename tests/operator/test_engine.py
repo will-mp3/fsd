@@ -92,7 +92,7 @@ def test_gate_refusal_does_not_replay_pending_action(tmp_path: Path) -> None:
 def test_budget_requires_explicit_extension(tmp_path: Path) -> None:
   platform, store = desktop(tmp_path)
   client = ScriptedClient([decision(), decision("done")])
-  recorder = Recorder([Reply(extend=True)])
+  recorder = Recorder([Reply(text="Keep going"), Reply(extend=True)])
   settings = Settings(action_limit=1)
   asyncio.run(
     Engine(platform, store, client, settings).run(
@@ -102,7 +102,9 @@ def test_budget_requires_explicit_extension(tmp_path: Path) -> None:
       recorder,
     )
   )
-  assert any(e.kind == "help" and e.limit for e in recorder.events)
+  help_events = [event for event in recorder.events if event.kind == "help"]
+  assert len(help_events) == 2
+  assert all(event.limit for event in help_events)
   assert recorder.events[-1].kind == "done"
 
 

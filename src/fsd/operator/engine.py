@@ -96,6 +96,47 @@ class Engine:
 
     token = object()
     self._active = token
+    deadline = time.monotonic() + self.settings.active_seconds
+    actions = 0
+    failures = 0
+    repeats = 0
+    previous_signature: tuple[bytes, str] | None = None
+
+    def check() -> None:
+      control.check()
+      if self._active is not token:
+        raise RunCancelled("Run was superseded")
+      if time.monotonic() >= deadline:
+        raise RunLimit("Active execution time limit reached.")
+
+    async def pause(message: str, *, limit: bool = False) -> None:
+      nonlocal deadline, actions, failures, repeats, previous_signature
+      started = time.monotonic()
+      session.notice(message)
+      while True:
+        control.check()
+        reply = await emit(Event("help", message, limit=limit))
+        if reply is None or reply.cancel:
+          raise RunCancelled("Run cancelled")
+        if limit and not reply.extend:
+          message = "Use /extend to grant another run budget, or /cancel."
+          continue
+        try:
+          session.guide(
+            reply.text or "User requested continuation; inspect the current screen."
+          )
+        except ValueError as exc:
+          message = str(exc)
+          continue
+        break
+      if limit:
+        deadline = time.monotonic() + self.settings.active_seconds
+        actions = 0
+      else:
+        deadline += time.monotonic() - started
+      failures = repeats = 0
+      previous_signature = None
+
     try:
       control.check()
       session.begin(goal)
