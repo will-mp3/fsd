@@ -3,8 +3,8 @@ import time
 from collections.abc import Awaitable, Callable
 
 from fsd.approval.gate import ActionGate
-from fsd.approval.store import ApprovalStore
-from fsd.operator.client import DecisionClient
+from fsd.approval.store import ApprovalStore, ApprovalStoreError
+from fsd.operator.client import DecisionClient, InferenceError, InvalidDecision
 from fsd.operator.config import Settings
 from fsd.operator.context import Session
 from fsd.operator.contracts import (
@@ -122,9 +122,7 @@ class Engine:
           message = "Use /extend to grant another run budget, or /cancel."
           continue
         try:
-          session.guide(
-            reply.text or "User requested continuation; inspect the current screen."
-          )
+          session.guide(reply.text or "User requested continuation; inspect the current screen.")
         except ValueError as exc:
           message = str(exc)
           continue
@@ -147,9 +145,48 @@ class Engine:
         raise PlatformError(
           "Grant required permissions first: " + ", ".join(p.name for p in missing)
         )
+      while True:
+        try:
+          check()
+          if actions >= self.settings.action_limit:
+            raise RunLimit("Action limit reached.")
+
+          self.store.refresh()
+          approved = self.store.approved()
+          frame = self.platform.capture(approved)
+          observation = session.observe(frame, approved)
+
+          result = None
+          for correction in (
+            "",
+            "Your last response was invalid. Return only a valid schema object.",
+          ):
+            try:
+              result = await controlled(
+                self.client.decide(observation, control, correction),
+                control,
+                max(0, deadline - time.monotonic()),
+              )
+              break
+            except InvalidDecision:
+              if correction:
+                await pause("The model returned two invalid decisions; no action was performed.")
+
+          if result is None:
+            continue
+
+          check()
+          self.store.refresh()
+          if approved != self.store.approved():
+            session.notice("App approvals changed. Reconsider using the new screenshot.")
+            continue
+
+          return
+        except (RunLimit, TimeoutError):
+          await pause("The active run budget has been reached.", limit=True)
     except RunCancelled:
       await emit(Event("cancelled", "Task cancelled; session remains open."))
-    except (PlatformError, ValueError, RuntimeError) as exc:
+    except (InferenceError, PlatformError, ApprovalStoreError, ValueError, RuntimeError) as exc:
       await emit(Event("failed", str(exc)))
     finally:
       if self._active is token:
