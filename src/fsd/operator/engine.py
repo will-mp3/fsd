@@ -181,6 +181,33 @@ class Engine:
             session.notice("App approvals changed. Reconsider using the new screenshot.")
             continue
 
+          decision = result.decision
+
+          if decision.previous_result == "failure":
+            failures += 1
+          elif decision.previous_result == "success":
+            failures = 0
+
+          if decision.kind == "help":
+            session.notes = decision.notes
+            await pause(decision.message)
+            continue
+
+          if decision.kind == "done":
+            session.record(decision, "completed")
+            await emit(Event("done", decision.message))
+            return
+
+          action = decision.action
+          assert action is not None
+          signature = (frame.png, action.model_dump_json())
+          repeats = repeats + 1 if signature == previous_signature else 0
+          previous_signature = signature
+
+          if failures >= self.settings.recovery_limit or repeats >= self.settings.recovery_limit:
+            await pause("Repeated attempts are not making progress. Guidance is needed.")
+            continue
+
           return
         except (RunLimit, TimeoutError):
           await pause("The active run budget has been reached.", limit=True)

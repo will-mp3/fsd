@@ -14,6 +14,43 @@ from fsd.platform.fake import FakePlatform
 from tests.operator.helpers import Recorder, ScriptedClient, decision, desktop
 
 
+def test_done_records_completion_without_input(tmp_path: Path) -> None:
+  platform, store = desktop(tmp_path)
+  settings = Settings()
+  session = Session(settings)
+  recorder = Recorder()
+  client = ScriptedClient([decision("done")])
+  asyncio.run(
+    Engine(platform, store, client, settings).run(
+      "Check whether the goal is complete", session, Control(), recorder
+    )
+  )
+  assert platform.capture_requests == [frozenset({"app"})]
+  assert platform.actions == []
+  assert recorder.events[-1].kind == "done"
+  assert session.history[-1]["status"] == "completed"
+  assert session.history[-1]["action"] is None
+
+
+def test_help_then_done_uses_fresh_observation_and_guidance(tmp_path: Path) -> None:
+  platform, store = desktop(tmp_path)
+  settings = Settings()
+  recorder = Recorder([Reply(text="The October document is already open")])
+  client = ScriptedClient([decision("help"), decision("done")])
+  asyncio.run(
+    Engine(platform, store, client, settings).run(
+      "Find the October document", Session(settings), Control(), recorder
+    )
+  )
+  assert platform.actions == []
+  assert platform.capture_requests == [frozenset({"app"}), frozenset({"app"})]
+  assert len(client.observations) == 2
+  assert client.observations[1].current.png != client.observations[0].current.png
+  assert client.observations[1].previous is None
+  assert "The October document is already open" in client.observations[1].text
+  assert [event.kind for event in recorder.events if event.kind != "metrics"] == ["help", "done"]
+
+
 def test_multiple_actions_do_not_require_confirmation(tmp_path: Path) -> None:
   platform, store = desktop(tmp_path)
   client = ScriptedClient([decision(), decision(combo="space"), decision("done")])
