@@ -1,12 +1,16 @@
 import asyncio
 from pathlib import Path
 
+import pytest
+
 from fsd.operator.client import InvalidDecision
 from fsd.operator.config import Settings
 from fsd.operator.context import Session
 from fsd.operator.contracts import Reply
 from fsd.operator.control import Control
 from fsd.operator.engine import Engine
+from fsd.platform.base import Capability, MissingPermission
+from fsd.platform.fake import FakePlatform
 from tests.operator.helpers import Recorder, ScriptedClient, decision, desktop
 
 
@@ -100,3 +104,61 @@ def test_budget_requires_explicit_extension(tmp_path: Path) -> None:
   )
   assert any(e.kind == "help" and e.limit for e in recorder.events)
   assert recorder.events[-1].kind == "done"
+
+
+def test_missing_permission_fails_before_capture(tmp_path: Path) -> None:
+  _, store = desktop(tmp_path)
+  platform = FakePlatform(missing_permissions=[MissingPermission("Screen Recording", "Grant it")])
+  client = ScriptedClient([])
+  recorder = Recorder()
+  settings = Settings()
+  asyncio.run(
+    Engine(platform, store, client, settings).run("Act", Session(settings), Control(), recorder)
+  )
+  assert platform.capture_requests == []
+  assert platform.actions == []
+  assert client.observations == []
+  assert recorder.events[-1].kind == "failed"
+  assert "Screen Recording" in recorder.events[-1].message
+
+
+@pytest.mark.parametrize(
+  "capabilities",
+  [
+    frozenset(),
+    frozenset({Capability.FILTERED_CAPTURE}),
+    frozenset({Capability.WINDOW_OWNER_LOOKUP}),
+  ],
+)
+def test_missing_capability_fails_before_capture(
+  tmp_path: Path, capabilities: frozenset[Capability]
+) -> None:
+  _, store = desktop(tmp_path)
+  platform = FakePlatform(capabilities=capabilities)
+  client = ScriptedClient([])
+  recorder = Recorder()
+  settings = Settings()
+  asyncio.run(
+    Engine(platform, store, client, settings).run("Act", Session(settings), Control(), recorder)
+  )
+  assert platform.capture_requests == []
+  assert platform.actions == []
+  assert client.observations == []
+  assert recorder.events[-1].kind == "failed"
+
+
+def test_failed_startup_does_not_block_later_run(tmp_path: Path) -> None:
+  _, store = desktop(tmp_path)
+  platform = FakePlatform(missing_permissions=[MissingPermission("Screen Recording", "Grant it")])
+  settings = Settings()
+  engine = Engine(platform, store, ScriptedClient([]), settings)
+  recorder = Recorder()
+  session = Session(settings)
+
+  async def scenario() -> None:
+    await engine.run("First goal", session, Control(), recorder)
+    await engine.run("Second goal", session, Control(), recorder)
+
+  asyncio.run(scenario())
+  assert [event.kind for event in recorder.events] == ["failed", "failed"]
+  assert all("Screen Recording" in event.message for event in recorder.events)

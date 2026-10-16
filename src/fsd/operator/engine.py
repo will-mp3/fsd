@@ -6,6 +6,7 @@ from fsd.approval.gate import ActionGate
 from fsd.approval.store import ApprovalStore
 from fsd.operator.client import DecisionClient
 from fsd.operator.config import Settings
+from fsd.operator.context import Session
 from fsd.operator.contracts import (
   Action,
   Click,
@@ -17,8 +18,8 @@ from fsd.operator.contracts import (
   TypeText,
   Wait,
 )
-from fsd.operator.control import Control, controlled
-from fsd.platform.base import Frame, Platform
+from fsd.operator.control import Control, RunCancelled, controlled
+from fsd.platform.base import MANDATORY_CAPABILITIES, Frame, Platform, PlatformError
 
 EventSink = Callable[[Event], Awaitable[Reply | None]]
 
@@ -74,3 +75,41 @@ class Engine:
           control,
           1,
         )
+
+  async def run(
+    self,
+    goal: str,
+    session: Session,
+    control: Control,
+    emit: EventSink,
+  ) -> None:
+    if self.input_uncertain:
+      await emit(
+        Event(
+          "failed",
+          "Input release failed earlier. Check keyboard state and restart fsd.",
+        )
+      )
+      return
+    if self._active is not None:
+      raise RuntimeError("This engine already has an active run.")
+
+    token = object()
+    self._active = token
+    try:
+      control.check()
+      session.begin(goal)
+      if not self.platform.capabilities >= MANDATORY_CAPABILITIES:
+        raise PlatformError("Required filtered capture or window ownership is unavailable.")
+      missing = self.platform.check_permissions()
+      if missing:
+        raise PlatformError(
+          "Grant required permissions first: " + ", ".join(p.name for p in missing)
+        )
+    except RunCancelled:
+      await emit(Event("cancelled", "Task cancelled; session remains open."))
+    except (PlatformError, ValueError, RuntimeError) as exc:
+      await emit(Event("failed", str(exc)))
+    finally:
+      if self._active is token:
+        self._active = None
