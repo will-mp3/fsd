@@ -1,11 +1,24 @@
+import asyncio
+import time
 from collections.abc import Awaitable, Callable
 
 from fsd.approval.gate import ActionGate
 from fsd.approval.store import ApprovalStore
 from fsd.operator.client import DecisionClient
 from fsd.operator.config import Settings
-from fsd.operator.contracts import Event, Reply
-from fsd.platform.base import Platform
+from fsd.operator.contracts import (
+  Action,
+  Click,
+  Event,
+  Hold,
+  Key,
+  Reply,
+  Scroll,
+  TypeText,
+  Wait,
+)
+from fsd.operator.control import Control, controlled
+from fsd.platform.base import Frame, Platform
 
 EventSink = Callable[[Event], Awaitable[Reply | None]]
 
@@ -29,3 +42,35 @@ class Engine:
     self.gate = ActionGate(platform, store)
     self._active: object | None = None
     self.input_uncertain = False
+
+  async def _execute(
+    self,
+    action: Action,
+    frame: Frame,
+    check: Callable[[], None],
+    control: Control,
+  ) -> None:
+    check()
+    if isinstance(action, Click):
+      self.gate.click(frame.to_screen(action.x, action.y))
+    elif isinstance(action, Scroll):
+      self.gate.scroll(frame.to_screen(action.x, action.y), action.dx, action.dy)
+    elif isinstance(action, TypeText):
+      self.gate.type_text_checked(action.text, check)
+    elif isinstance(action, Key):
+      self.gate.press_keys(action.combo)
+    elif isinstance(action, Hold):
+      if action.duration_ms > self.settings.max_hold_ms:
+        raise ValueError("Requested hold exceeds the configured limit.")
+      self.gate.hold_key(action.key, action.duration_ms, check)
+    elif isinstance(action, Wait):
+      if action.duration_ms > self.settings.max_wait_ms:
+        raise ValueError("Requested wait exceeds the configured limit.")
+      deadline = time.monotonic() + action.duration_ms / 1000
+      while time.monotonic() < deadline:
+        check()
+        await controlled(
+          asyncio.sleep(min(0.02, max(0, deadline - time.monotonic()))),
+          control,
+          1,
+        )
