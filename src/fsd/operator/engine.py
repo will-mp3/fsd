@@ -154,7 +154,9 @@ class Engine:
 
           self.store.refresh()
           approved = self.store.approved()
+          capture_started = time.monotonic()
           frame = self.platform.capture(approved)
+          capture_seconds = time.monotonic() - capture_started
           observation = session.observe(frame, approved)
 
           result = None
@@ -183,6 +185,21 @@ class Engine:
             continue
 
           decision = result.decision
+          await emit(
+            Event(
+              "metrics",
+              "Decision received",
+              metrics={
+                "capture_seconds": capture_seconds,
+                "request_seconds": result.request_seconds,
+                "screenshot_to_decision_seconds": time.monotonic() - capture_started,
+                "input_tokens": result.input_tokens,
+                "output_tokens": result.output_tokens,
+                "cost": result.cost,
+              },
+            )
+          )
+          check()
 
           if decision.previous_result == "failure":
             failures += 1
@@ -218,21 +235,33 @@ class Engine:
 
           before_owner = self.platform.frontmost_app()
           actions += 1
+          started_action = time.monotonic()
+
           try:
             await self._execute(action, frame, check, control)
           except ReleaseError:
             session.record(decision, "release failed; input state uncertain")
             raise
           except (GateRefused, ValueError) as exc:
-            session.record(decision, "refused or interrupted; inspetc before retrying")
+            session.record(decision, "refused or interrupted; inspect before retrying")
             await pause(str(exc))
             continue
           except (RunCancelled, RunLimit, PlatformError, RuntimeError, ApprovalStoreError):
-            session.record(decision, "interrupted; input may have partially occured")
+            session.record(decision, "interrupted; input may have partially occurred")
             raise
 
           session.record(decision, "performed; outcome awaits next observation")
-          await emit(Event("action", f"Performed {action.kind}"))
+          await emit(
+            Event(
+              "action",
+              f"Performed {action.kind}",
+              metrics={
+                "action": action.kind,
+                "execution_seconds": time.monotonic() - started_action,
+                "screenshot_to_action_seconds": started_action - capture_started,
+              },
+            )
+          )
 
           after_owner = self.platform.frontmost_app()
           if after_owner != before_owner and (

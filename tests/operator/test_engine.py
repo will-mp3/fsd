@@ -1,16 +1,19 @@
 import asyncio
-from collections.abc import Callable
+from collections.abc import Callable, Collection
+from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
+from fsd.operator import engine as engine_module
 from fsd.operator.client import InvalidDecision
 from fsd.operator.config import Settings
 from fsd.operator.context import Observation, Session
 from fsd.operator.contracts import Event, Hold, ModelResult, Reply, TypeText
 from fsd.operator.control import Control
 from fsd.operator.engine import Engine
-from fsd.platform.base import Capability, MissingPermission
+from fsd.platform.base import Capability, Frame, MissingPermission
 from fsd.platform.fake import FakePlatform
 from fsd.platform.held_input import ReleaseError
 from tests.operator.helpers import Recorder, ScriptedClient, decision, desktop
@@ -285,3 +288,91 @@ def test_failed_release_blocks_later_goals(tmp_path: Path) -> None:
   assert "release failed" in str(session.history[-1]["status"])
   assert recorder.events[-1].kind == "failed"
   assert "restart" in recorder.events[-1].message
+
+
+def test_metrics_distinguish_capture_inference_and_action_time(
+  tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+  platform, store = desktop(tmp_path)
+  now = 100.0
+  monkeypatch.setattr(engine_module, "time", SimpleNamespace(monotonic=lambda: now))
+  original_capture = platform.capture
+  original_press_keys = platform.press_keys
+
+  def capture(bundle_ids: Collection[str]) -> Frame:
+    nonlocal now
+    now += 2.0
+    return original_capture(bundle_ids)
+
+  def press_keys(combo: str) -> None:
+    nonlocal now
+    now += 5.0
+    original_press_keys(combo)
+
+  class TimedClient(ScriptedClient):
+    async def decide(
+      self, observation: Observation, control: Control, correction: str = ""
+    ) -> ModelResult:
+      nonlocal now
+      result = await super().decide(observation, control, correction)
+      now += 3.0
+      return replace(result, request_seconds=3.0, cost=None)
+
+  monkeypatch.setattr(platform, "capture", capture)
+  monkeypatch.setattr(platform, "press_keys", press_keys)
+  recorder = Recorder()
+
+  async def emit(event: Event) -> Reply | None:
+    nonlocal now
+    if event.kind == "progress":
+      now += 7.0
+    return await recorder(event)
+
+  settings = Settings()
+  client = TimedClient([decision(), decision("done")])
+  asyncio.run(
+    Engine(platform, store, client, settings).run(
+      "Act then inspect", Session(settings), Control(), emit
+    )
+  )
+  metrics = [event.metrics for event in recorder.events if event.kind == "metrics"]
+  assert len(metrics) == 2
+  for payload in metrics:
+    assert payload is not None
+    assert payload["capture_seconds"] == 2.0
+    assert payload["request_seconds"] == 3.0
+    assert payload["screenshot_to_decision_seconds"] == 5.0
+    assert payload["input_tokens"] == 10
+    assert payload["output_tokens"] == 5
+    assert payload["cost"] is None
+
+  action_events = [event for event in recorder.events if event.kind == "action"]
+  assert len(action_events) == 1
+  action_metrics = action_events[0].metrics
+  assert action_metrics is not None
+  assert action_metrics["action"] == "key"
+  assert action_metrics["execution_seconds"] == 5.0
+  assert action_metrics["screenshot_to_action_seconds"] == 12.0
+  assert platform.actions == [("press_keys", "return")]
+  assert recorder.events[-1].kind == "done"
+
+
+@pytest.mark.parametrize("kind", ["act", "help", "done"])
+def test_cancellation_during_metrics_stops_decision_handling(tmp_path: Path, kind: str) -> None:
+  platform, store = desktop(tmp_path)
+  settings = Settings()
+  control = Control()
+  session = Session(settings)
+  events: list[Event] = []
+
+  async def emit(event: Event) -> Reply | None:
+    events.append(event)
+    if event.kind == "metrics":
+      control.cancel()
+    return None
+
+  client = ScriptedClient([decision(kind), decision("done")])
+  asyncio.run(Engine(platform, store, client, settings).run("Inspect", session, control, emit))
+  assert platform.actions == []
+  assert list(session.history) == []
+  assert [event.kind for event in events] == ["metrics", "cancelled"]
