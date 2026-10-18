@@ -2,7 +2,7 @@ import asyncio
 import time
 from collections.abc import Awaitable, Callable
 
-from fsd.approval.gate import ActionGate
+from fsd.approval.gate import ActionGate, GateRefused
 from fsd.approval.store import ApprovalStore, ApprovalStoreError
 from fsd.operator.client import DecisionClient, InferenceError, InvalidDecision
 from fsd.operator.config import Settings
@@ -20,6 +20,7 @@ from fsd.operator.contracts import (
 )
 from fsd.operator.control import Control, RunCancelled, controlled
 from fsd.platform.base import MANDATORY_CAPABILITIES, Frame, Platform, PlatformError
+from fsd.platform.held_input import ReleaseError
 
 EventSink = Callable[[Event], Awaitable[Reply | None]]
 
@@ -208,11 +209,50 @@ class Engine:
             await pause("Repeated attempts are not making progress. Guidance is needed.")
             continue
 
-          return
+          await emit(Event("progress", decision.message))
+          check()
+          self.store.refresh()
+          if approved != self.store.approved():
+            session.notice("Approvals changed before execution; choose again from a fresh image.")
+            continue
+
+          before_owner = self.platform.frontmost_app()
+          actions += 1
+          try:
+            await self._execute(action, frame, check, control)
+          except ReleaseError:
+            session.record(decision, "release failed; input state uncertain")
+            raise
+          except (GateRefused, ValueError) as exc:
+            session.record(decision, "refused or interrupted; inspetc before retrying")
+            await pause(str(exc))
+            continue
+          except (RunCancelled, RunLimit, PlatformError, RuntimeError, ApprovalStoreError):
+            session.record(decision, "interrupted; input may have partially occured")
+            raise
+
+          session.record(decision, "performed; outcome awaits next observation")
+          await emit(Event("action", f"Performed {action.kind}"))
+
+          after_owner = self.platform.frontmost_app()
+          if after_owner != before_owner and (
+            after_owner is None or not self.store.is_approved(after_owner)
+          ):
+            await pause("The action changed focus to an unapproved or unidentified app.")
+
         except (RunLimit, TimeoutError):
           await pause("The active run budget has been reached.", limit=True)
+
     except RunCancelled:
       await emit(Event("cancelled", "Task cancelled; session remains open."))
+    except ReleaseError as exc:
+      self.input_uncertain = True
+      await emit(
+        Event(
+          "failed",
+          str(exc) + " Check keyboard state and restart fsd before more input.",
+        )
+      )
     except (InferenceError, PlatformError, ApprovalStoreError, ValueError, RuntimeError) as exc:
       await emit(Event("failed", str(exc)))
     finally:

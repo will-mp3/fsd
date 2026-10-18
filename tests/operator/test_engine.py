@@ -1,16 +1,18 @@
 import asyncio
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
 
 from fsd.operator.client import InvalidDecision
 from fsd.operator.config import Settings
-from fsd.operator.context import Session
-from fsd.operator.contracts import Reply
+from fsd.operator.context import Observation, Session
+from fsd.operator.contracts import Event, Hold, ModelResult, Reply, TypeText
 from fsd.operator.control import Control
 from fsd.operator.engine import Engine
 from fsd.platform.base import Capability, MissingPermission
 from fsd.platform.fake import FakePlatform
+from fsd.platform.held_input import ReleaseError
 from tests.operator.helpers import Recorder, ScriptedClient, decision, desktop
 
 
@@ -114,16 +116,24 @@ def test_gate_refusal_does_not_replay_pending_action(tmp_path: Path) -> None:
   client = ScriptedClient([decision(), decision("done")])
   recorder = Recorder([Reply(text="Cancel that keystroke; goal already complete")])
   settings = Settings()
+
+  async def emit(event: Event) -> Reply | None:
+    if event.kind == "help":
+      platform.frontmost = "app"
+    return await recorder(event)
+
   asyncio.run(
     Engine(platform, store, client, settings).run(
       "Inspect",
       Session(settings),
       Control(),
-      recorder,
+      emit,
     )
   )
   assert platform.actions == []
   assert len(client.observations) == 2
+  assert platform.frontmost == "app"
+  assert recorder.events[-1].kind == "done"
 
 
 def test_budget_requires_explicit_extension(tmp_path: Path) -> None:
@@ -201,3 +211,77 @@ def test_failed_startup_does_not_block_later_run(tmp_path: Path) -> None:
   asyncio.run(scenario())
   assert [event.kind for event in recorder.events] == ["failed", "failed"]
   assert all("Screen Recording" in event.message for event in recorder.events)
+
+
+def test_cancel_after_model_response_prevents_input(tmp_path: Path) -> None:
+  class CancellingClient(ScriptedClient):
+    async def decide(
+      self, observation: Observation, control: Control, correction: str = ""
+    ) -> ModelResult:
+      result = await super().decide(observation, control, correction)
+      control.cancel()
+      return result
+
+  platform, store = desktop(tmp_path)
+  settings = Settings()
+  recorder = Recorder()
+  asyncio.run(
+    Engine(platform, store, CancellingClient([decision()]), settings).run(
+      "Act", Session(settings), Control(), recorder
+    )
+  )
+  assert platform.actions == []
+  assert recorder.events[-1].kind == "cancelled"
+
+
+def test_partial_typing_is_recorded_before_cancellation(tmp_path: Path) -> None:
+  platform, store = desktop(tmp_path)
+  control = Control()
+
+  def interrupted_type(text: str, check: Callable[[], None]) -> None:
+    check()
+    platform.actions.append(("type_character", text[0]))
+    control.cancel()
+    check()
+
+  platform.type_text_checked = interrupted_type  # type: ignore[method-assign]
+  choice = decision().model_copy(update={"action": TypeText(kind="type", text="hello")})
+  settings = Settings()
+  session = Session(settings)
+  recorder = Recorder()
+  asyncio.run(
+    Engine(platform, store, ScriptedClient([choice]), settings).run(
+      "Type hello", session, control, recorder
+    )
+  )
+  assert platform.actions == [("type_character", "h")]
+  assert "partially" in str(session.history[-1]["status"])
+  assert recorder.events[-1].kind == "cancelled"
+
+
+def test_failed_release_blocks_later_goals(tmp_path: Path) -> None:
+  platform, store = desktop(tmp_path)
+
+  def failed_hold(key: str, duration_ms: int, check: Callable[[], None]) -> None:
+    check()
+    platform.actions.append(("hold_key", key, duration_ms))
+    raise ReleaseError("Key release failed")
+
+  platform.hold_key = failed_hold  # type: ignore[method-assign]
+  choice = decision().model_copy(update={"action": Hold(kind="hold", key="left", duration_ms=20)})
+  client = ScriptedClient([choice, decision()])
+  settings = Settings()
+  engine = Engine(platform, store, client, settings)
+  recorder = Recorder()
+  session = Session(settings)
+
+  async def scenario() -> None:
+    await engine.run("Move", session, Control(), recorder)
+    await engine.run("Try again", session, Control(), recorder)
+
+  asyncio.run(scenario())
+  assert len(platform.actions) == 1
+  assert len(client.observations) == 1
+  assert "release failed" in str(session.history[-1]["status"])
+  assert recorder.events[-1].kind == "failed"
+  assert "restart" in recorder.events[-1].message
