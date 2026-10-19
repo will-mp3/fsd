@@ -1,8 +1,10 @@
 import time
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
-from fsd.operator.client import DecisionClient, InferenceError
+import httpx
+
+from fsd.operator.client import DecisionClient, InferenceError, OpenRouterClient
 from fsd.operator.config import Settings
 from fsd.operator.context import Observation
 from fsd.operator.contracts import Decision
@@ -62,5 +64,22 @@ async def evaluate(
           "correct": assess(case, result.decision) if assess is not None else None,
         }
       )
+
+  return rows
+
+
+async def compare(
+  cases: Sequence[Case],
+  models: Sequence[str],
+  api_key: str,
+  assess: Assessment | None = None,
+) -> list[dict[str, object]]:
+  rows: list[dict[str, object]] = []
+
+  async with httpx.AsyncClient() as http:
+    for model in models:
+      settings = replace(Settings(), model=model)
+      client = OpenRouterClient(http, api_key, settings)
+      rows.extend(await evaluate(cases, client, settings, assess))
 
   return rows
