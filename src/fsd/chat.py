@@ -1,13 +1,21 @@
+import asyncio
+import os
 import signal
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from types import FrameType
 from typing import TextIO
 
+import httpx
+
+from fsd.approval.store import ApprovalStore
+from fsd.operator.client import OpenRouterClient
+from fsd.operator.config import Settings
 from fsd.operator.context import Session
 from fsd.operator.contracts import Event, Reply
 from fsd.operator.control import Control
 from fsd.operator.engine import Engine
+from fsd.platform.base import Platform
 
 
 @contextmanager
@@ -93,3 +101,20 @@ async def conversation(
     control = Control()
     with interrupt_handler(control.cancel):
       await engine.run(goal, session, control, emit)
+
+
+def launch_chat(platform: Platform, store: ApprovalStore, out: TextIO, err: TextIO) -> int:
+  key = os.environ.get("OPENROUTER_API_KEY", "").strip()
+  if not key:
+    print("fsd: set OPENROUTER_API_KEY before starting chat.", file=err)
+    return 2
+  settings = Settings()
+
+  async def start() -> None:
+    async with httpx.AsyncClient() as http:
+      client = OpenRouterClient(http, key, settings)
+      engine = Engine(platform, store, client, settings)
+      await conversation(engine, Session(settings), input, out)
+
+  asyncio.run(start())
+  return 0

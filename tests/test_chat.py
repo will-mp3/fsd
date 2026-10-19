@@ -1,11 +1,15 @@
 import asyncio
 import io
+import json
 import signal
 from pathlib import Path
+from types import SimpleNamespace
 
+import httpx
 import pytest
 
-from fsd.chat import conversation, display, interrupt_handler
+from fsd import chat
+from fsd.chat import conversation, display, interrupt_handler, launch_chat
 from fsd.operator.config import Settings
 from fsd.operator.context import Session
 from fsd.operator.control import Control, RunCancelled
@@ -209,3 +213,78 @@ def test_diagnostics_receive_metrics_while_terminal_shows_progress(tmp_path: Pat
   assert "Performed key" in output.getvalue()
   assert "Task complete" in output.getvalue()
   assert "input_tokens" not in output.getvalue()
+
+
+@pytest.mark.parametrize("key", [None, "", " \t "])
+def test_missing_key_fails_before_entering_conversation(
+  tmp_path: Path, monkeypatch: pytest.MonkeyPatch, key: str | None
+) -> None:
+  if key is None:
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+  else:
+    monkeypatch.setenv("OPENROUTER_API_KEY", key)
+
+  def unexpected_input(prompt: str) -> str:
+    pytest.fail("Missing credentials must be rejected before reading a goal")
+
+  monkeypatch.setattr("builtins.input", unexpected_input)
+  platform, store = desktop(tmp_path)
+  out, err = io.StringIO(), io.StringIO()
+
+  assert launch_chat(platform, store, out, err) == 2
+  assert "OPENROUTER_API_KEY" in err.getvalue()
+  assert out.getvalue() == ""
+  assert platform.capture_requests == []
+
+
+@pytest.mark.parametrize("reader_fails", [False, True])
+def test_launcher_uses_configured_model_and_closes_http_client(
+  tmp_path: Path, monkeypatch: pytest.MonkeyPatch, reader_fails: bool
+) -> None:
+  monkeypatch.setenv("OPENROUTER_API_KEY", "  test-key  ")
+  settings = Settings(model="configured-test-model")
+  monkeypatch.setattr(chat, "Settings", lambda: settings)
+  requests: list[httpx.Request] = []
+
+  def handle(request: httpx.Request) -> httpx.Response:
+    requests.append(request)
+    assert request.headers["Authorization"] == "Bearer test-key"
+    assert json.loads(request.content)["model"] == "configured-test-model"
+    return httpx.Response(
+      200,
+      json={
+        "choices": [
+          {
+            "finish_reason": "stop",
+            "message": {"content": decision("done").model_dump_json()},
+          }
+        ]
+      },
+    )
+
+  http = httpx.AsyncClient(transport=httpx.MockTransport(handle))
+  monkeypatch.setattr(chat, "httpx", SimpleNamespace(AsyncClient=lambda: http))
+  commands = iter(["First goal", "Follow-up goal", "/exit"])
+
+  def read(prompt: str) -> str:
+    assert not http.is_closed
+    command = next(commands)
+    if reader_fails and command == "/exit":
+      raise OSError("Terminal read failed")
+    return command
+
+  monkeypatch.setattr("builtins.input", read)
+  platform, store = desktop(tmp_path)
+  out, err = io.StringIO(), io.StringIO()
+
+  if reader_fails:
+    with pytest.raises(OSError, match="Terminal read failed"):
+      launch_chat(platform, store, out, err)
+  else:
+    assert launch_chat(platform, store, out, err) == 0
+
+  assert http.is_closed
+  assert len(requests) == 2
+  assert out.getvalue().count("Task complete") == 2
+  assert err.getvalue() == ""
+  assert "test-key" not in out.getvalue()
