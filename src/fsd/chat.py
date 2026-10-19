@@ -54,8 +54,13 @@ async def conversation(
 
   async def emit(event: Event) -> Reply | None:
     nonlocal exit_requested
-    if event.metrics is not None and diagnostics is not None:
-      diagnostics(event.metrics)
+    if diagnostics is not None:
+      metrics = dict(event.metrics or {})
+      if event.kind in {"action", "help", "done", "failed", "cancelled"}:
+        metrics["status"] = event.kind
+      if metrics:
+        diagnostics(metrics)
+
     if event.kind == "metrics":
       return None
 

@@ -77,6 +77,17 @@ resumable session. Captured images sent to the configured hosted model contain
 approved applications only. Model performance and completion reliability still
 need live evaluation on your tasks.
 
+To append timing, action-type, and token/cost metrics to a JSONL file:
+
+```bash
+FSD_METRICS_PATH=./metrics.jsonl uv run fsd chat
+```
+
+The parent directory must already exist. Each record is flushed as it is
+written. Records exclude screenshots, task text, typed text, and API keys;
+they do not restore a session or establish whether a task succeeded. File
+errors stop chat with exit status `2` and a diagnostic message.
+
 ## Development
 
 ```bash

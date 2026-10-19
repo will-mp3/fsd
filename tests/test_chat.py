@@ -11,6 +11,7 @@ import pytest
 
 from fsd import chat
 from fsd.chat import conversation, display, interrupt_handler, launch_chat
+from fsd.operator.client import InferenceError
 from fsd.operator.config import Settings
 from fsd.operator.context import Session
 from fsd.operator.control import Control, RunCancelled
@@ -210,12 +211,59 @@ def test_diagnostics_receive_metrics_while_terminal_shows_progress(tmp_path: Pat
     )
   )
 
-  assert len(metrics) == 3
+  assert len(metrics) == 4
   assert metrics[1]["action"] == "key"
+  assert metrics[1]["status"] == "action"
+  assert metrics[-1] == {"status": "done"}
   assert "Continue" in output.getvalue()
   assert "Performed key" in output.getvalue()
   assert "Task complete" in output.getvalue()
   assert "input_tokens" not in output.getvalue()
+
+
+def test_diagnostics_record_help_and_cancellation_without_message_text(tmp_path: Path) -> None:
+  platform, store = desktop(tmp_path)
+  help_decision = decision("help").model_copy(update={"message": "private-help-detail"})
+  client = ScriptedClient([help_decision])
+  commands = iter(["private-goal", "/cancel", "/exit"])
+  settings = Settings()
+  metrics: list[dict[str, object]] = []
+
+  asyncio.run(
+    conversation(
+      Engine(platform, store, client, settings),
+      Session(settings),
+      lambda prompt: next(commands),
+      io.StringIO(),
+      diagnostics=metrics.append,
+    )
+  )
+
+  assert [row for row in metrics if "status" in row] == [
+    {"status": "help"},
+    {"status": "cancelled"},
+  ]
+  assert "private-" not in json.dumps(metrics)
+
+
+def test_diagnostics_record_failure_without_exception_text(tmp_path: Path) -> None:
+  platform, store = desktop(tmp_path)
+  client = ScriptedClient([InferenceError("private-provider-detail")])
+  commands = iter(["private-goal", "/exit"])
+  settings = Settings()
+  metrics: list[dict[str, object]] = []
+
+  asyncio.run(
+    conversation(
+      Engine(platform, store, client, settings),
+      Session(settings),
+      lambda prompt: next(commands),
+      io.StringIO(),
+      diagnostics=metrics.append,
+    )
+  )
+
+  assert metrics == [{"status": "failed"}]
 
 
 @pytest.mark.parametrize("key", [None, "", " \t "])

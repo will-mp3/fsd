@@ -70,7 +70,7 @@ def test_metrics_append_and_flush_without_private_content(
   def read(prompt: str) -> str:
     command = next(commands)
     if command == "/exit":
-      assert len(path.read_text(encoding="utf-8").splitlines()) == 4
+      assert len(path.read_text(encoding="utf-8").splitlines()) == 5
     return command
 
   monkeypatch.setattr("builtins.input", read)
@@ -84,6 +84,7 @@ def test_metrics_append_and_flush_without_private_content(
   assert rows[2]["action"] == "type"
   assert "execution_seconds" in rows[2]
   assert rows[3]["output_tokens"] == 5
+  assert rows[4] == {"status": "done"}
   assert "private-" not in text
   allowed = {
     "capture_seconds",
@@ -95,6 +96,7 @@ def test_metrics_append_and_flush_without_private_content(
     "action",
     "execution_seconds",
     "screenshot_to_action_seconds",
+    "status",
   }
   assert all(set(row) <= allowed for row in rows[1:])
 
