@@ -2,6 +2,7 @@ import asyncio
 import io
 import json
 import signal
+from collections.abc import Iterator
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -151,7 +152,9 @@ def test_help_cancellation_and_exit_have_distinct_session_lifetimes(
 def test_idle_interrupt_and_invalid_commands_do_not_start_runs(tmp_path: Path) -> None:
   platform, store = desktop(tmp_path)
   client = ScriptedClient([decision("done")])
-  commands = iter([KeyboardInterrupt(), "  ", "/unknown", "Actual goal", EOFError()])
+  commands: Iterator[str | BaseException] = iter(
+    [KeyboardInterrupt(), "  ", "/unknown", "Actual goal", EOFError()]
+  )
   settings = Settings()
 
   def read(prompt: str) -> str:
