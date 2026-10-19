@@ -241,10 +241,15 @@ def test_missing_key_fails_before_entering_conversation(
 
 
 @pytest.mark.parametrize("reader_fails", [False, True])
+@pytest.mark.parametrize("metrics_enabled", [False, True])
 def test_launcher_uses_configured_model_and_closes_http_client(
-  tmp_path: Path, monkeypatch: pytest.MonkeyPatch, reader_fails: bool
+  tmp_path: Path, monkeypatch: pytest.MonkeyPatch, reader_fails: bool, metrics_enabled: bool
 ) -> None:
   monkeypatch.setenv("OPENROUTER_API_KEY", "  test-key  ")
+  if metrics_enabled:
+    monkeypatch.setenv("FSD_METRICS_PATH", str(tmp_path / "metrics.jsonl"))
+  else:
+    monkeypatch.delenv("FSD_METRICS_PATH", raising=False)
   settings = Settings(model="configured-test-model")
   monkeypatch.setattr(chat, "Settings", lambda: settings)
   requests: list[httpx.Request] = []

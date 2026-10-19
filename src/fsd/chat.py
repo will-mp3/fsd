@@ -1,8 +1,11 @@
 import asyncio
+import json
 import os
 import signal
 from collections.abc import Callable, Iterator
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
+from functools import partial
+from pathlib import Path
 from types import FrameType
 from typing import TextIO
 
@@ -103,6 +106,17 @@ async def conversation(
       await engine.run(goal, session, control, emit)
 
 
+class DiagnosticsError(Exception):
+  pass
+
+
+def _diagnostic_io[T](operation: Callable[[], T]) -> T:
+  try:
+    return operation()
+  except OSError:
+    raise DiagnosticsError from None
+
+
 def launch_chat(platform: Platform, store: ApprovalStore, out: TextIO, err: TextIO) -> int:
   key = os.environ.get("OPENROUTER_API_KEY", "").strip()
   if not key:
@@ -111,10 +125,29 @@ def launch_chat(platform: Platform, store: ApprovalStore, out: TextIO, err: Text
   settings = Settings()
 
   async def start() -> None:
-    async with httpx.AsyncClient() as http:
-      client = OpenRouterClient(http, key, settings)
-      engine = Engine(platform, store, client, settings)
-      await conversation(engine, Session(settings), input, out)
+    metrics_path = os.environ.get("FSD_METRICS_PATH")
+    with ExitStack() as stack:
+      stream = None
+      if metrics_path:
+        stream = _diagnostic_io(
+          lambda: Path(metrics_path).open("a", encoding="utf-8")  # noqa: SIM115
+        )
+        stack.callback(_diagnostic_io, stream.close)
 
-  asyncio.run(start())
+      def record(metrics: dict[str, object]) -> None:
+        if stream is not None:
+          line = json.dumps(metrics, allow_nan=False) + "\n"
+          _diagnostic_io(partial(stream.write, line))
+          _diagnostic_io(stream.flush)
+
+      async with httpx.AsyncClient() as http:
+        client = OpenRouterClient(http, key, settings)
+        engine = Engine(platform, store, client, settings)
+        await conversation(engine, Session(settings), input, out, record)
+
+  try:
+    asyncio.run(start())
+  except DiagnosticsError:
+    print("fsd: could not write diagnostic records; check FSD_METRICS_PATH.", file=err)
+    return 2
   return 0
