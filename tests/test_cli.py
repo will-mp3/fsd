@@ -63,6 +63,7 @@ def test_resolve_empty_app_list_is_refused() -> None:
   ("argv", "expected"),
   [
     (["doctor"], {"command": "doctor"}),
+    (["chat"], {"command": "chat"}),
     (["apps", "list"], {"command": "apps", "apps_command": "list"}),
     (
       ["apps", "approve", "Notes"],
@@ -103,6 +104,7 @@ def test_parser_help_lists_commands_and_exits_successfully(
   captured = capsys.readouterr()
   assert "doctor" in captured.out
   assert "apps" in captured.out
+  assert "chat" in captured.out
   assert captured.err == ""
 
 
@@ -253,6 +255,44 @@ def test_run_lists_apps_with_injected_store(store: ApprovalStore) -> None:
   row = next(line for line in out.getvalue().splitlines() if "com.apple.Notes" in line)
   assert row.startswith("approved")
   assert err.getvalue() == ""
+
+
+def test_chat_needs_no_model_argument(
+  store: ApprovalStore, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+  monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
+  monkeypatch.setattr("builtins.input", lambda prompt: "/exit")
+  platform = FakePlatform()
+  out, err = io.StringIO(), io.StringIO()
+
+  code = cli.run(["chat"], backend_factory=lambda: platform, store=store, out=out, err=err)
+
+  assert code == 0
+  assert "enter a goal" in out.getvalue()
+  assert err.getvalue() == ""
+  assert platform.capture_requests == []
+  assert platform.actions == []
+  captured = capsys.readouterr()
+  assert captured.out == ""
+  assert captured.err == ""
+
+
+def test_chat_reports_missing_credentials_through_cli(
+  tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+  monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+  monkeypatch.setenv("FSD_CONFIG_DIR", str(tmp_path))
+  platform = FakePlatform()
+  out, err = io.StringIO(), io.StringIO()
+
+  code = cli.run(["chat"], backend_factory=lambda: platform, out=out, err=err)
+
+  assert code == 2
+  assert "OPENROUTER_API_KEY" in err.getvalue()
+  assert "Traceback" not in err.getvalue()
+  assert out.getvalue() == ""
+  assert platform.capture_requests == []
+  assert platform.actions == []
 
 
 @pytest.mark.parametrize("command", ["approve", "block"])

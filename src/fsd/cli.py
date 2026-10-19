@@ -6,6 +6,7 @@ from collections.abc import Callable, Sequence
 from typing import TextIO
 
 from fsd.approval.store import ApprovalStore, ApprovalStoreError, default_store_path
+from fsd.chat import launch_chat
 from fsd.platform import select_backend
 from fsd.platform.base import AppInfo, Platform, PlatformError
 
@@ -35,6 +36,7 @@ def _build_parser() -> argparse.ArgumentParser:
   )
   commands = parser.add_subparsers(dest="command", required=True)
   commands.add_parser("doctor", help="check capabilities and OS permissions")
+  commands.add_parser("chat", help="start an autonomous visual conversation")
 
   apps = commands.add_parser("apps", help="list applications and change their approval")
   apps_commands = apps.add_subparsers(dest="apps_command", required=True)
@@ -118,6 +120,9 @@ def run(
 
     if store is None:
       store = ApprovalStore(default_store_path())
+
+    if args.command == "chat":
+      return launch_chat(platform, store, out, err)
 
     if args.apps_command == "list":
       return _list_apps(platform, store, out)
