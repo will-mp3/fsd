@@ -3,7 +3,10 @@
 import argparse
 import sys
 from collections.abc import Callable, Sequence
+from pathlib import Path
 from typing import TextIO
+
+from dotenv import load_dotenv
 
 from fsd.approval.store import ApprovalStore, ApprovalStoreError, default_store_path
 from fsd.chat import launch_chat
@@ -134,4 +137,13 @@ def run(
 
 
 def main() -> None:
+  try:
+    with Path(".env").open(encoding="utf-8") as stream:
+      load_dotenv(stream=stream, override=False)
+  except FileNotFoundError:
+    pass
+  except (OSError, UnicodeError):
+    print("fsd: could not read .env; check its permissions and UTF-8 encoding.", file=sys.stderr)
+    sys.exit(2)
+
   sys.exit(run(None))

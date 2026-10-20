@@ -405,10 +405,11 @@ def test_run_help_does_not_construct_backend(capsys: pytest.CaptureFixture[str])
   [(["--help"], 0), ([], 2), (["apps", "approve"], 2)],
 )
 def test_main_reads_process_arguments_and_exits_with_expected_status(
-  argv: list[str], expected_status: int
+  argv: list[str], expected_status: int, tmp_path: Path
 ) -> None:
   result = subprocess.run(
     [sys.executable, "-c", "from fsd.cli import main; main()", *argv],
+    cwd=tmp_path,
     capture_output=True,
     text=True,
     timeout=10,
