@@ -196,6 +196,7 @@ class Engine:
                 "input_tokens": result.input_tokens,
                 "output_tokens": result.output_tokens,
                 "cost": result.cost,
+                "previous_result": decision.previous_result,
               },
             )
           )
