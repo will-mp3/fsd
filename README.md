@@ -53,8 +53,14 @@ and `2` for reported errors or invalid command syntax.
 
 ## Interactive session
 
-Set `OPENROUTER_API_KEY` in your environment, approve the applications you want
-the agent to use, and make the starting application visible. Then run:
+Set `OPENROUTER_API_KEY` in your environment, or create a local `.env` using
+`.env.example` as a template and enter your key there. CLI startup loads `.env`
+from the current working directory; existing environment variables take
+precedence. A missing file is allowed, and parent directories are not searched.
+Your `.env` and the default `metrics.jsonl` output are ignored by Git.
+
+Approve the applications you want the agent to use and make the starting
+application visible. From the project directory, run:
 
 ```bash
 uv run fsd chat
@@ -77,7 +83,8 @@ resumable session. Captured images sent to the configured hosted model contain
 approved applications only. Model performance and completion reliability still
 need live evaluation on your tasks.
 
-To append timing, action-type, and token/cost metrics to a JSONL file:
+To append timings, action types, lifecycle statuses, model-reported action
+outcomes, and token/cost metrics to a JSONL file:
 
 ```bash
 FSD_METRICS_PATH=./metrics.jsonl uv run fsd chat
