@@ -357,6 +357,33 @@ def test_metrics_distinguish_capture_inference_and_action_time(
   assert recorder.events[-1].kind == "done"
 
 
+@pytest.mark.parametrize("outcome", ["none", "success", "failure", "uncertain"])
+def test_metrics_preserve_model_assessment_of_previous_action(tmp_path: Path, outcome: str) -> None:
+  platform, store = desktop(tmp_path)
+  settings = Settings()
+  recorder = Recorder()
+  client = ScriptedClient(
+    [
+      decision().model_copy(update={"previous_result": "none"}),
+      decision("done").model_copy(update={"previous_result": outcome}),
+    ]
+  )
+
+  asyncio.run(
+    Engine(platform, store, client, settings).run(
+      "Act then inspect", Session(settings), Control(), recorder
+    )
+  )
+
+  metrics = [event.metrics for event in recorder.events if event.kind == "metrics"]
+  assert len(metrics) == 2
+  assert metrics[0] is not None
+  assert metrics[0]["previous_result"] == "none"
+  assert metrics[1] is not None
+  assert metrics[1]["previous_result"] == outcome
+  assert platform.actions == [("press_keys", "return")]
+
+
 @pytest.mark.parametrize("kind", ["act", "help", "done"])
 def test_cancellation_during_metrics_stops_decision_handling(tmp_path: Path, kind: str) -> None:
   platform, store = desktop(tmp_path)

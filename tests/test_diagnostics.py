@@ -81,9 +81,11 @@ def test_metrics_append_and_flush_without_private_content(
   assert rows[0] == {"existing": True}
   assert rows[1]["input_tokens"] == 10
   assert rows[1]["cost"] == 0.0001
+  assert rows[1]["previous_result"] == "none"
   assert rows[2]["action"] == "type"
   assert "execution_seconds" in rows[2]
   assert rows[3]["output_tokens"] == 5
+  assert rows[3]["previous_result"] == "success"
   assert rows[4] == {"status": "done"}
   assert "private-" not in text
   allowed = {
@@ -97,6 +99,7 @@ def test_metrics_append_and_flush_without_private_content(
     "execution_seconds",
     "screenshot_to_action_seconds",
     "status",
+    "previous_result",
   }
   assert all(set(row) <= allowed for row in rows[1:])
 
