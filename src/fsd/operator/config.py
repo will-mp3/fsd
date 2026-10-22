@@ -18,3 +18,10 @@ class Settings:
   retries: int = 2
   recovery_limit: int = 3
   max_output_tokens: int = 1024
+  refusal_streak_limit: int = 3
+  refusal_total_limit: int = 20
+  no_change_limit: int = 2
+  repeat_screen_limit: int = 3
+  stuck_warning_limit: int = 2
+  rejected_done_limit: int = 2
+  verify_settle_ms: int = 500
