@@ -103,5 +103,39 @@ def test_gate_sees_approval_changes_made_after_it_was_created(store: ApprovalSto
 
 
 def test_refusal_message_names_the_owner() -> None:
-  assert UNAPPROVED in str(GateRefused("click", UNAPPROVED))
-  assert "no identifiable app" in str(GateRefused("click", None))
+  # The owner-facing message still names the app; only agent context omits it.
+  assert UNAPPROVED in str(GateRefused("click", UNAPPROVED, "pointer_target"))
+  assert "no identifiable app" in str(GateRefused("click", None, "pointer_target"))
+
+
+def test_pointer_refusal_reports_pointer_target(store: ApprovalStore) -> None:
+  fake = FakePlatform(windows=[WindowInfo(UNAPPROVED, Rect(0, 0, 100, 100), 0)])
+  with pytest.raises(GateRefused) as refusal:
+    ActionGate(fake, store).click(ScreenPoint(50, 50))
+  assert refusal.value.reason == "pointer_target"
+  assert fake.actions == []
+
+
+def test_keyboard_refusal_reports_keyboard_focus(store: ApprovalStore) -> None:
+  fake = FakePlatform(frontmost=UNAPPROVED)
+  with pytest.raises(GateRefused) as refusal:
+    ActionGate(fake, store).type_text_checked("hello")
+  assert refusal.value.reason == "keyboard_focus"
+  assert fake.actions == []
+
+
+def test_focus_change_during_typing_reports_focus_changed(store: ApprovalStore) -> None:
+  # Partial input is possible here, so the agent gets a different hint.
+  fake = FakePlatform(frontmost=APPROVED)
+  calls = 0
+
+  def check() -> None:
+    nonlocal calls
+    calls += 1
+    if calls == 3:
+      fake.frontmost = UNAPPROVED
+
+  with pytest.raises(GateRefused) as refusal:
+    ActionGate(fake, store).type_text_checked("abc", check)
+  assert refusal.value.reason == "focus_changed"
+  assert fake.actions == [("type_character", "a")]
