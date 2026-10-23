@@ -51,7 +51,7 @@ def test_first_observation_has_no_visible_change_value() -> None:
 
 def test_actions_without_change_warn_then_escalate() -> None:
   # The agent gets a chance to change approach before a human is asked.
-  recovery = Recovery(Settings())
+  recovery = Recovery(Settings(repeat_screen_limit=7))
   escalations = [recovery.observe(A, None).escalation]
   escalations += [recovery.observe(A, A).escalation for _ in range(4)]
   assert escalations == ["continue", "continue", "warn", "continue", "escalate"]
@@ -75,6 +75,38 @@ def test_oscillating_screens_warn_despite_visible_change() -> None:
   sequence = [(A, None), (B, A), (A, B), (B, A), (A, B)]
   escalations = [recovery.observe(current, before).escalation for current, before in sequence]
   assert escalations == ["continue", "continue", "continue", "continue", "warn"]
+
+
+def test_oscillation_after_warning_escalates_without_claiming_progress() -> None:
+  # A warning must not make familiar screens look new and erase its own budget.
+  recovery = Recovery(Settings())
+  screens = [A, B, A, B, A, B, A, B, A, B]
+  before = None
+  observations = []
+  for current in screens:
+    observations.append(recovery.observe(current, before))
+    before = current
+
+  assert observations[4].escalation == "warn"
+  assert all(seen.escalation == "continue" for seen in observations[5:9])
+  assert observations[9].escalation == "escalate"
+  assert all(seen.progress is False for seen in observations[2:])
+
+
+def test_reset_clears_screen_history_and_stuck_warning_budget() -> None:
+  recovery = Recovery(Settings())
+  recovery.observe(A, None)
+  recovery.observe(A, A)
+  assert recovery.observe(A, A).escalation == "warn"
+  recovery.observe(A, A)
+  recovery.reset()
+
+  seen = recovery.observe(A, None)
+  assert seen.visible_change is None
+  assert seen.progress is False
+  assert seen.escalation == "continue"
+  assert recovery.observe(A, A).escalation == "continue"
+  assert recovery.observe(A, A).escalation == "warn"
 
 
 def test_hints_cover_every_reason_and_name_no_app() -> None:
