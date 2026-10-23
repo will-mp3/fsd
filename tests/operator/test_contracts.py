@@ -6,6 +6,19 @@ from pydantic import ValidationError
 from fsd.operator.contracts import Decision
 
 
+def test_metrics_event_carries_snapshot_bytes_for_archival() -> None:
+  from fsd.operator.contracts import Event, Snapshot
+
+  png = b"captured-png"
+  snapshot = Snapshot(run_id="run-1", step=2, png=png)
+  event = Event(kind="metrics", message="", snapshot=snapshot)
+
+  assert event.snapshot is not None
+  assert event.snapshot.run_id == "run-1"
+  assert event.snapshot.step == 2
+  assert event.snapshot.png == png
+
+
 @pytest.mark.parametrize("complete", [True, False])
 def test_verdict_accepts_evidence_for_either_outcome(complete: bool) -> None:
   from fsd.operator.contracts import Verdict

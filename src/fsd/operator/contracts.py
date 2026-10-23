@@ -126,9 +126,7 @@ class VerificationResult:
   cached_input_tokens: int | None = None
 
 
-dataclass(frozen=True)
-
-
+@dataclass(frozen=True)
 class Snapshot:
   run_id: str
   step: int
