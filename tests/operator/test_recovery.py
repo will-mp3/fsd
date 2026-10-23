@@ -109,6 +109,13 @@ def test_reset_clears_screen_history_and_stuck_warning_budget() -> None:
   assert recovery.observe(A, A).escalation == "warn"
 
 
+def test_reset_forgets_screens_when_judging_new_progress() -> None:
+  recovery = Recovery(Settings())
+  recovery.observe(B, None)
+  recovery.reset()
+  assert recovery.observe(B, A).progress is True
+
+
 def test_hints_cover_every_reason_and_name_no_app() -> None:
   # Bundle IDs are enforcement metadata, never agent input.
   assert set(REFUSAL_HINTS) == {"pointer_target", "keyboard_focus", "focus_changed"}

@@ -6,6 +6,34 @@ from pydantic import ValidationError
 from fsd.operator.contracts import Decision
 
 
+@pytest.mark.parametrize("complete", [True, False])
+def test_verdict_accepts_evidence_for_either_outcome(complete: bool) -> None:
+  from fsd.operator.contracts import Verdict
+
+  verdict = Verdict.model_validate_json(
+    json.dumps({"complete": complete, "evidence": "The document title shows Saved."})
+  )
+  assert verdict.complete is complete
+  assert verdict.evidence == "The document title shows Saved."
+
+
+@pytest.mark.parametrize(
+  "data",
+  [
+    {"complete": True, "evidence": ""},
+    {"complete": False, "evidence": " \n\t"},
+    {"complete": True, "evidence": "x" * 501},
+    {"complete": "true", "evidence": "Saved"},
+    {"complete": True, "evidence": "Saved", "action": {"kind": "key", "combo": "return"}},
+  ],
+)
+def test_verdict_rejects_invalid_evidence_and_schema(data: dict[str, object]) -> None:
+  from fsd.operator.contracts import Verdict
+
+  with pytest.raises(ValidationError):
+    Verdict.model_validate_json(json.dumps(data))
+
+
 def payload(action: dict[str, object] | None) -> str:
   return json.dumps(
     {

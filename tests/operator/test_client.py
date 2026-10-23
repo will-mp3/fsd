@@ -1,9 +1,11 @@
 import asyncio
 import json
+from types import SimpleNamespace
 
 import httpx
 import pytest
 
+from fsd.operator import client as client_module
 from fsd.operator.config import Settings
 from fsd.operator.context import SYSTEM_PROMPT, Observation
 from fsd.operator.control import Control
@@ -454,5 +456,151 @@ def test_cancellation_interrupts_backoff(monkeypatch: pytest.MonkeyPatch) -> Non
         task.cancel()
         await asyncio.gather(task, return_exceptions=True)
     assert requests == 1
+
+  asyncio.run(scenario())
+
+
+def ask(content: str | None, finish: str = "stop") -> httpx.Response:
+  return httpx.Response(
+    200,
+    json={
+      "choices": [{"finish_reason": finish, "message": {"content": content}}],
+      "usage": {"prompt_tokens": 100, "completion_tokens": 30, "cost": 0.001},
+    },
+  )
+
+
+@pytest.mark.parametrize(
+  ("response", "cause"),
+  [
+    (httpx.Response(200, content=b"not json"), "envelope"),
+    (httpx.Response(200, json={"choices": []}), "envelope"),
+    (ask(done_content(), finish="length"), "finish_reason"),
+    (ask(None), "empty"),
+    (ask("{}"), "schema"),
+  ],
+)
+def test_invalid_responses_report_their_cause(response: httpx.Response, cause: str) -> None:
+  # The trace needs the cause to tell truncation from schema drift.
+  from fsd.operator.client import InvalidDecision, OpenRouterClient
+
+  async def scenario() -> None:
+    async def handle(request: httpx.Request) -> httpx.Response:
+      return response
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as http:
+      with pytest.raises(InvalidDecision) as invalid:
+        await OpenRouterClient(http, "key", Settings()).decide(
+          Observation(frame(b"png"), None, "{}", 0), Control()
+        )
+    assert invalid.value.cause == cause
+
+  asyncio.run(scenario())
+
+
+def test_encoding_is_timed_separately_from_the_request(monkeypatch: pytest.MonkeyPatch) -> None:
+  # The research asked for this split; request time must not include encoding.
+  from fsd.operator.client import OpenRouterClient
+
+  now = 0.0
+  monkeypatch.setattr(client_module, "time", SimpleNamespace(monotonic=lambda: now))
+  original = client_module.request_body
+
+  def slow_body(*args: object) -> dict[str, object]:
+    nonlocal now
+    now += 2.0
+    return original(*args)  # type: ignore[arg-type]
+
+  monkeypatch.setattr(client_module, "request_body", slow_body)
+
+  async def scenario() -> None:
+    async def handle(request: httpx.Request) -> httpx.Response:
+      nonlocal now
+      now += 3.0
+      return ask(done_content())
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as http:
+      result = await OpenRouterClient(http, "key", Settings()).decide(
+        Observation(frame(b"png"), None, "{}", 0), Control()
+      )
+    assert result.encode_seconds == 2.0
+    assert result.request_seconds == 3.0
+
+  asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(("details", "expected"), [({"cached_tokens": 40}, 40), (None, None)])
+def test_cached_tokens_are_recorded_or_left_unknown(
+  details: dict[str, int] | None, expected: int | None
+) -> None:
+  # Unknown is not zero: no cost claim may assume a cache hit or miss.
+  from fsd.operator.client import OpenRouterClient
+
+  usage: dict[str, object] = {"prompt_tokens": 100, "completion_tokens": 30}
+  if details is not None:
+    usage["prompt_tokens_details"] = details
+
+  async def scenario() -> None:
+    async def handle(request: httpx.Request) -> httpx.Response:
+      return httpx.Response(
+        200,
+        json={
+          "choices": [{"finish_reason": "stop", "message": {"content": done_content()}}],
+          "usage": usage,
+        },
+      )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as http:
+      result = await OpenRouterClient(http, "key", Settings()).decide(
+        Observation(frame(b"png"), None, "{}", 0), Control()
+      )
+    assert result.cached_input_tokens == expected
+
+  asyncio.run(scenario())
+
+
+def test_verification_sees_only_the_goal_and_one_frame() -> None:
+  # Isolation is the point: history and notes carry the reasoning behind the claim.
+  from fsd.operator.client import VERIFY_PROMPT, OpenRouterClient
+
+  bodies: list[dict[str, object]] = []
+
+  async def scenario() -> None:
+    async def handle(request: httpx.Request) -> httpx.Response:
+      bodies.append(json.loads(request.content))
+      return ask(json.dumps({"complete": False, "evidence": "The file is still unsaved."}))
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as http:
+      result = await OpenRouterClient(http, "key", Settings()).verify(
+        "Save the document", frame(b"png"), Control()
+      )
+    assert result.verdict.complete is False
+    assert result.verdict.evidence == "The file is still unsaved."
+
+  asyncio.run(scenario())
+  messages = bodies[0]["messages"]
+  assert isinstance(messages, list)
+  assert messages[0] == {"role": "system", "content": VERIFY_PROMPT}
+  content = messages[1]["content"]
+  assert [part["type"] for part in content].count("image_url") == 1
+  text = json.dumps(content)
+  assert "Save the document" in text
+  assert "history" not in text and "notes" not in text and "previous" not in text
+  response_format = bodies[0]["response_format"]
+  assert isinstance(response_format, dict)
+  assert response_format["json_schema"]["name"] == "completion_verdict"
+
+
+def test_invalid_verdict_reports_schema_cause() -> None:
+  from fsd.operator.client import InvalidDecision, OpenRouterClient
+
+  async def scenario() -> None:
+    async def handle(request: httpx.Request) -> httpx.Response:
+      return ask(json.dumps({"complete": True, "evidence": ""}))
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as http:
+      with pytest.raises(InvalidDecision) as invalid:
+        await OpenRouterClient(http, "key", Settings()).verify("Goal", frame(b"png"), Control())
+    assert invalid.value.cause == "schema"
 
   asyncio.run(scenario())

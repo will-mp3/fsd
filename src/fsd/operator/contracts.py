@@ -92,6 +92,18 @@ class Decision(StrictModel):
     return self
 
 
+class Verdict(StrictModel):
+  complete: bool
+  evidence: ShortText
+
+  @field_validator("evidence")
+  @classmethod
+  def describes_evidence(cls, value: str) -> str:
+    if not value.strip():
+      raise ValueError("A verdict must describe the visible evidence")
+    return value
+
+
 @dataclass(frozen=True)
 class ModelResult:
   decision: Decision
@@ -99,6 +111,28 @@ class ModelResult:
   input_tokens: int = 0
   output_tokens: int = 0
   cost: float | None = None
+  encode_seconds: float = 0.0
+  cached_input_tokens: int | None = None
+
+
+@dataclass(frozen=True)
+class VerificationResult:
+  verdict: Verdict
+  request_seconds: float
+  input_tokens: int = 0
+  output_tokens: int = 0
+  cost: float | None = None
+  encode_seconds: float = 0.0
+  cached_input_tokens: int | None = None
+
+
+dataclass(frozen=True)
+
+
+class Snapshot:
+  run_id: str
+  step: int
+  png: bytes
 
 
 @dataclass(frozen=True)
@@ -107,6 +141,7 @@ class Event:
   message: str
   limit: bool = False
   metrics: dict[str, object] | None = None
+  snapshot: Snapshot | None = None
 
 
 @dataclass(frozen=True)
