@@ -97,7 +97,7 @@ def test_help_captures_again_and_keeps_running(tmp_path: Path) -> None:
 
 def test_two_invalid_decisions_pause_without_input(tmp_path: Path) -> None:
   platform, store = desktop(tmp_path)
-  client = ScriptedClient([InvalidDecision("bad"), InvalidDecision("bad")])
+  client = ScriptedClient([InvalidDecision("schema"), InvalidDecision("schema")])
   settings = Settings()
   recorder = Recorder([Reply(cancel=True)])
   asyncio.run(

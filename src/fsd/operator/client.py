@@ -1,7 +1,7 @@
 import asyncio
 import base64
 import time
-from typing import Protocol
+from typing import Literal, Protocol
 
 import httpx
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
@@ -16,8 +16,13 @@ class InferenceError(Exception):
   pass
 
 
+InvalidCause = Literal["envelope", "finish_reason", "empty", "schema"]
+
+
 class InvalidDecision(InferenceError):
-  pass
+  def __init__(self, cause: InvalidCause) -> None:
+    super().__init__("Model returned an invalid or imcomplete response.")
+    self.cause = cause
 
 
 class DecisionClient(Protocol):
@@ -49,6 +54,29 @@ class Usage(BaseModel):
 class Envelope(BaseModel):
   choices: list[Choice]
   usage: Usage | None = None
+
+
+def parse[T: BaseModel](content: bytes, schema: type[T]) -> tuple[T, Usage]:
+  try:
+    envelope = Envelope.model_validate_json(content)
+  except ValidationError:
+    raise InvalidDecision("envelope") from None
+
+  if not envelope.choices:
+    raise InvalidDecision("envelope")
+  if envelope.choices[0].finish_reason != "stop":
+    raise InvalidDecision("finish_reason")
+
+  text = envelope.choices[0].message.content
+  if text is None:
+    raise InvalidDecision("empty")
+
+  try:
+    parsed = schema.model_validate_json(text)
+  except ValidationError:
+    raise InvalidDecision("schema") from None
+
+  return parsed, envelope.usage or Usage()
 
 
 def request_body(
@@ -149,23 +177,8 @@ class OpenRouterClient:
             "check model/schema support."
           )
         else:
-          try:
-            envelope = Envelope.model_validate_json(response.content)
-            if not envelope.choices or envelope.choices[0].finish_reason != "stop":
-              raise ValueError("Incomplete response")
-
-            content = envelope.choices[0].message.content
-            if content is None:
-              raise ValueError("No decision")
-
-            decision = Decision.model_validate_json(content)
-          except (ValidationError, ValueError):
-            raise InvalidDecision(
-              "Model returned an invalid or incomplete action response."
-            ) from None
-
+          decision, usage = parse(response.content, Decision)
           control.check()
-          usage = envelope.usage or Usage()
           return ModelResult(
             decision=decision,
             request_seconds=time.monotonic() - started,

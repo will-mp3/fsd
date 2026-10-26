@@ -36,9 +36,7 @@ def test_valid_decision_can_be_assessed_as_incorrect() -> None:
   assert assessed == [(case, choice)]
 
 
-@pytest.mark.parametrize(
-  "failure", [InvalidDecision("private-error"), InferenceError("private-error")]
-)
+@pytest.mark.parametrize("failure", [InvalidDecision("schema"), InferenceError("private-error")])
 def test_inference_failure_is_recorded_and_later_cases_continue(failure: InferenceError) -> None:
   assessed: list[str] = []
 
