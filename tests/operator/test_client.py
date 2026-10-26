@@ -494,6 +494,7 @@ def test_invalid_responses_report_their_cause(response: httpx.Response, cause: s
           Observation(frame(b"png"), None, "{}", 0), Control()
         )
     assert invalid.value.cause == cause
+    assert invalid.value.__suppress_context__
 
   asyncio.run(scenario())
 
@@ -557,6 +558,43 @@ def test_cached_tokens_are_recorded_or_left_unknown(
     assert result.cached_input_tokens == expected
 
   asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("correction", ["", "Return a valid completion verdict."])
+def test_verify_body_limits_context_and_requires_verdict_schema(correction: str) -> None:
+  from fsd.operator.client import VERIFY_PROMPT, verify_body
+
+  goal = 'Save "draft"\nand close the dialog'
+  settings = Settings(model="test/verifier", max_output_tokens=123)
+  body = verify_body(goal, frame(b"png"), settings, correction)
+  content: list[dict[str, object]] = [{"type": "text", "text": json.dumps({"goal": goal})}]
+  if correction:
+    content.append({"type": "text", "text": correction})
+  content.extend(
+    [
+      {"type": "text", "text": "current screenshot"},
+      {"type": "image_url", "image_url": {"url": "data:image/png;base64,cG5n"}},
+    ]
+  )
+
+  assert body["messages"] == [
+    {"role": "system", "content": VERIFY_PROMPT},
+    {"role": "user", "content": content},
+  ]
+  assert body["model"] == "test/verifier"
+  assert body["max_tokens"] == 123
+  assert body["stream"] is False
+  assert body["provider"] == {"require_parameters": True}
+  response_format = body["response_format"]
+  assert isinstance(response_format, dict)
+  assert response_format["type"] == "json_schema"
+  options = response_format["json_schema"]
+  assert options["name"] == "completion_verdict"
+  assert options["strict"] is True
+  schema = options["schema"]
+  assert schema["additionalProperties"] is False
+  assert set(schema["properties"]) == {"complete", "evidence"}
+  assert set(schema["required"]) == {"complete", "evidence"}
 
 
 def test_verification_sees_only_the_goal_and_one_frame() -> None:

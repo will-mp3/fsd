@@ -72,13 +72,13 @@ def parse[T: BaseModel](content: bytes, schema: type[T]) -> tuple[T, Usage]:
     raise InvalidDecision("envelope") from None
 
   if not envelope.choices:
-    raise InvalidDecision("envelope")
+    raise InvalidDecision("envelope") from None
   if envelope.choices[0].finish_reason != "stop":
-    raise InvalidDecision("finish_reason")
+    raise InvalidDecision("finish_reason") from None
 
   text = envelope.choices[0].message.content
   if text is None:
-    raise InvalidDecision("empty")
+    raise InvalidDecision("empty") from None
 
   try:
     parsed = schema.model_validate_json(text)
