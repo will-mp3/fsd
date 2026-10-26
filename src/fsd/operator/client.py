@@ -43,12 +43,21 @@ class Choice(BaseModel):
   finish_reason: str | None = None
 
 
+class TokenDetails(BaseModel):
+  cached_tokens: int | None = Field(default=None, ge=0)
+
+
 class Usage(BaseModel):
   model_config = ConfigDict(allow_inf_nan=False)
 
   prompt_tokens: int = Field(default=0, ge=0)
   completion_tokens: int = Field(default=0, ge=0)
   cost: float | None = Field(default=None, ge=0)
+  prompt_tokens_details: TokenDetails | None = None
+
+  @property
+  def cached_tokens(self) -> int | None:
+    return self.prompt_tokens_details.cached_tokens if self.prompt_tokens_details else None
 
 
 class Envelope(BaseModel):
@@ -141,8 +150,10 @@ class OpenRouterClient:
     control: Control,
     correction: str = "",
   ) -> ModelResult:
-    started = time.monotonic()
+    encode_started = time.monotonic()
     body = request_body(observation, self._settings, correction)
+    encode_seconds = time.monotonic() - encode_started
+    started = time.monotonic()
 
     for attempt in range(self._settings.retries + 1):
       control.check()
@@ -185,6 +196,8 @@ class OpenRouterClient:
             input_tokens=usage.prompt_tokens,
             output_tokens=usage.completion_tokens,
             cost=usage.cost,
+            encode_seconds=encode_seconds,
+            cached_input_tokens=usage.cached_tokens,
           )
 
       delay = min(0.25 * 2**attempt, 1.0)
