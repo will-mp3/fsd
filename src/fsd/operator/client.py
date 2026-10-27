@@ -9,7 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from fsd.operator.config import Settings
 from fsd.operator.context import SYSTEM_PROMPT, Observation
-from fsd.operator.contracts import Decision, ModelResult, Verdict
+from fsd.operator.contracts import Decision, ModelResult, Verdict, VerificationResult
 from fsd.operator.control import Control, controlled
 from fsd.platform.base import Frame
 
@@ -34,6 +34,14 @@ class DecisionClient(Protocol):
     control: Control,
     correction: str = "",
   ) -> ModelResult: ...
+
+  async def verify(
+    self,
+    goal: str,
+    frame: Frame,
+    control: Control,
+    correction: str = "",
+  ) -> VerificationResult: ...
 
 
 class Message(BaseModel):
@@ -184,6 +192,28 @@ class OpenRouterClient:
     decision, usage, request_seconds = await self._exchange(body, Decision, control)
     return ModelResult(
       decision=decision,
+      request_seconds=request_seconds,
+      input_tokens=usage.prompt_tokens,
+      output_tokens=usage.completion_tokens,
+      cost=usage.cost,
+      encode_seconds=encode_seconds,
+      cached_input_tokens=usage.cached_tokens,
+    )
+
+  async def verify(
+    self,
+    goal: str,
+    frame: Frame,
+    control: Control,
+    correction: str = "",
+  ) -> VerificationResult:
+    encode_started = time.monotonic()
+    body = verify_body(goal, frame, self._settings, correction)
+    encode_seconds = time.monotonic() - encode_started
+
+    verdict, usage, request_seconds = await self._exchange(body, Verdict, control)
+    return VerificationResult(
+      verdict=verdict,
       request_seconds=request_seconds,
       input_tokens=usage.prompt_tokens,
       output_tokens=usage.completion_tokens,

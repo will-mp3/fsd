@@ -629,6 +629,59 @@ def test_verification_sees_only_the_goal_and_one_frame() -> None:
   assert response_format["json_schema"]["name"] == "completion_verdict"
 
 
+def test_verification_reports_separate_timing_and_usage(monkeypatch: pytest.MonkeyPatch) -> None:
+  from fsd.operator.client import OpenRouterClient
+
+  now = 0.0
+  monkeypatch.setattr(client_module, "time", SimpleNamespace(monotonic=lambda: now))
+  original = client_module.verify_body
+
+  def slow_body(
+    goal: str, current: Frame, settings: Settings, correction: str
+  ) -> dict[str, object]:
+    nonlocal now
+    now += 2.0
+    return original(goal, current, settings, correction)
+
+  monkeypatch.setattr(client_module, "verify_body", slow_body)
+
+  async def scenario() -> None:
+    async def handle(request: httpx.Request) -> httpx.Response:
+      nonlocal now
+      now += 3.0
+      return httpx.Response(
+        200,
+        json={
+          "choices": [
+            {
+              "finish_reason": "stop",
+              "message": {"content": json.dumps({"complete": True, "evidence": "Saved"})},
+            },
+          ],
+          "usage": {
+            "prompt_tokens": 100,
+            "completion_tokens": 30,
+            "cost": 0.001,
+            "prompt_tokens_details": {"cached_tokens": 40},
+          },
+        },
+      )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as http:
+      result = await OpenRouterClient(http, "key", Settings()).verify(
+        "Save the document", frame(b"png"), Control()
+      )
+    assert result.verdict.complete is True
+    assert result.encode_seconds == 2.0
+    assert result.request_seconds == 3.0
+    assert result.input_tokens == 100
+    assert result.output_tokens == 30
+    assert result.cached_input_tokens == 40
+    assert result.cost == 0.001
+
+  asyncio.run(scenario())
+
+
 def test_invalid_verdict_reports_schema_cause() -> None:
   from fsd.operator.client import InvalidDecision, OpenRouterClient
 

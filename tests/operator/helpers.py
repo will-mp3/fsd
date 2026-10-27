@@ -3,7 +3,7 @@ from pathlib import Path
 
 from fsd.approval.store import ApprovalStore
 from fsd.operator.context import Observation
-from fsd.operator.contracts import Decision, Event, ModelResult, Reply
+from fsd.operator.contracts import Decision, Event, ModelResult, Reply, Verdict, VerificationResult
 from fsd.operator.control import Control
 from fsd.platform.base import Frame, Rect, WindowInfo
 from fsd.platform.fake import FakePlatform
@@ -22,10 +22,20 @@ def decision(kind: str = "act", combo: str = "return") -> Decision:
   )
 
 
+def verdict(complete: bool = True) -> Verdict:
+  return Verdict(complete=complete, evidence="Goal visible" if complete else "Goal not visible")
+
+
 class ScriptedClient:
-  def __init__(self, decisions: list[Decision | Exception]) -> None:
+  def __init__(
+    self,
+    decisions: list[Decision | Exception],
+    verdicts: list[Verdict | Exception] | None = None,
+  ) -> None:
     self.decisions = deque(decisions)
+    self.verdicts = deque(verdicts or [])
     self.observations: list[Observation] = []
+    self.verifications: list[tuple[str, Frame]] = []
 
   async def decide(
     self,
@@ -39,6 +49,20 @@ class ScriptedClient:
     if isinstance(item, Exception):
       raise item
     return ModelResult(item, 0.01, 10, 5, 0.0001)
+
+  async def verify(
+    self,
+    goal: str,
+    frame: Frame,
+    control: Control,
+    correction: str = "",
+  ) -> VerificationResult:
+    self.verifications.append((goal, frame))
+    control.check()
+    item = self.verdicts.popleft() if self.verdicts else verdict()
+    if isinstance(item, Exception):
+      raise item
+    return VerificationResult(item, 0.01, 10, 5, 0.0001)
 
 
 class Recorder:
