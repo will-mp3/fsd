@@ -180,6 +180,21 @@ class OpenRouterClient:
     encode_started = time.monotonic()
     body = request_body(observation, self._settings, correction)
     encode_seconds = time.monotonic() - encode_started
+
+    decision, usage, request_seconds = await self._exchange(body, Decision, control)
+    return ModelResult(
+      decision=decision,
+      request_seconds=request_seconds,
+      input_tokens=usage.prompt_tokens,
+      output_tokens=usage.completion_tokens,
+      cost=usage.cost,
+      encode_seconds=encode_seconds,
+      cached_input_tokens=usage.cached_tokens,
+    )
+
+  async def _exchange[T: BaseModel](
+    self, body: dict[str, object], schema: type[T], control: Control
+  ) -> tuple[T, Usage, float]:
     started = time.monotonic()
 
     for attempt in range(self._settings.retries + 1):
@@ -215,17 +230,9 @@ class OpenRouterClient:
             "check model/schema support."
           )
         else:
-          decision, usage = parse(response.content, Decision)
+          parsed, usage = parse(response.content, schema)
           control.check()
-          return ModelResult(
-            decision=decision,
-            request_seconds=time.monotonic() - started,
-            input_tokens=usage.prompt_tokens,
-            output_tokens=usage.completion_tokens,
-            cost=usage.cost,
-            encode_seconds=encode_seconds,
-            cached_input_tokens=usage.cached_tokens,
-          )
+          return parsed, usage, time.monotonic() - started
 
       delay = min(0.25 * 2**attempt, 1.0)
       await controlled(asyncio.sleep(delay), control, 2)
