@@ -23,7 +23,7 @@ InvalidCause = Literal["envelope", "finish_reason", "empty", "schema"]
 
 class InvalidDecision(InferenceError):
   def __init__(self, cause: InvalidCause) -> None:
-    super().__init__("Model returned an invalid or imcomplete response.")
+    super().__init__("Model returned an invalid or incomplete response.")
     self.cause = cause
 
 
@@ -87,7 +87,7 @@ def parse[T: BaseModel](content: bytes, schema: type[T]) -> tuple[T, Usage]:
     raise InvalidDecision("finish_reason") from None
 
   text = envelope.choices[0].message.content
-  if text is None:
+  if text is None or not text.strip():
     raise InvalidDecision("empty") from None
 
   try:

@@ -477,6 +477,8 @@ def ask(content: str | None, finish: str = "stop") -> httpx.Response:
     (httpx.Response(200, json={"choices": []}), "envelope"),
     (ask(done_content(), finish="length"), "finish_reason"),
     (ask(None), "empty"),
+    (ask(""), "empty"),
+    (ask(" \n\t"), "empty"),
     (ask("{}"), "schema"),
   ],
 )
