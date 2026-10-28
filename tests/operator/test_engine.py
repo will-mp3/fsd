@@ -439,6 +439,22 @@ def steps(recorder: Recorder) -> list[dict[str, object]]:
   return [e.metrics for e in recorder.events if e.kind == "metrics" and e.metrics is not None]
 
 
+def test_help_events_keep_run_identity_after_continuation(tmp_path: Path) -> None:
+  # Owner interaction must not break correlation within a single run.
+  platform, store = desktop(tmp_path)
+  client = ScriptedClient([decision("help"), decision("help")])
+  recorder = Recorder([Reply(text="Inspect again"), Reply(cancel=True)])
+  run_engine(platform, store, client, recorder)
+
+  help_events = [event for event in recorder.events if event.kind == "help"]
+  assert len(help_events) == 2
+  assert help_events[0].metrics is not None
+  run_id = help_events[0].metrics.get("run_id")
+  assert isinstance(run_id, str) and run_id
+  assert help_events[1].metrics == {"run_id": run_id}
+  assert recorder.events[-1].kind == "cancelled"
+
+
 @pytest.mark.parametrize("phase", ["decide", "verify"])
 def test_two_invalid_responses_record_once_before_help(tmp_path: Path, phase: str) -> None:
   # Retrying the same captured frame must not create a second trace step.

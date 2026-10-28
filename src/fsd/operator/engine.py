@@ -12,6 +12,7 @@ from fsd.operator.context import Session
 from fsd.operator.contracts import (
   Action,
   Click,
+  Decision,
   Event,
   Hold,
   Key,
@@ -24,6 +25,8 @@ from fsd.operator.contracts import (
   Wait,
 )
 from fsd.operator.control import Control, RunCancelled, controlled
+from fsd.operator.frames import Thumbnail
+from fsd.operator.recovery import Recovery
 from fsd.platform.base import MANDATORY_CAPABILITIES, Frame, Platform, PlatformError
 from fsd.platform.held_input import ReleaseError
 
@@ -130,6 +133,9 @@ class Engine:
     deadline = time.monotonic() + self.settings.active_seconds
     actions = 0
     failures = 0
+    recovery = Recovery(self.settings)
+    acted_on: Thumbnail | None = None
+    last_decision: Decision | None = None
     repeats = 0
     previous_signature: tuple[bytes, str] | None = None
 
@@ -182,13 +188,18 @@ class Engine:
       step += 1
       await emit(event)
 
-    async def pause(message: str, *, limit: bool = False) -> None:
-      nonlocal deadline, actions, failures, repeats, previous_signature
+    async def pause(message: str, *, limit: bool = False, note: str | None = None) -> None:
+      nonlocal deadline, actions, failures, repeats, previous_signature, acted_on, last_decision
+      control.check()
       started = time.monotonic()
-      session.notice(message)
+
+      # Owner-facing messages may name apps that the agent cannot see
+      session.notice(message if note is None else note)
+
       while True:
         control.check()
-        reply = await emit(Event("help", message, limit=limit))
+        reply = await emit(Event("help", message, limit=limit, metrics={"run_id": run_id}))
+        control.check()
         if reply is None or reply.cancel:
           raise RunCancelled("Run cancelled")
         if limit and not reply.extend:
@@ -200,13 +211,18 @@ class Engine:
           message = str(exc)
           continue
         break
+
       if limit:
         deadline = time.monotonic() + self.settings.active_seconds
         actions = 0
       else:
         deadline += time.monotonic() - started
+
       failures = repeats = 0
       previous_signature = None
+      recovery.reset()
+      acted_on = None
+      last_decision = None
 
     async def ask[T](request: Callable[[str], Awaitable[T]], shot: Step) -> T | None:
       for correction in ("", CORRECTION):
