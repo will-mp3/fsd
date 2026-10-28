@@ -1,4 +1,5 @@
 import asyncio
+import secrets
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -17,6 +18,7 @@ from fsd.operator.contracts import (
   ModelResult,
   Reply,
   Scroll,
+  Snapshot,
   TypeText,
   VerificationResult,
   Wait,
@@ -121,6 +123,9 @@ class Engine:
 
     token = object()
     self._active = token
+    run_id = secrets.token_hex(8)
+    step = 0
+    pending: Step | None = None
     deadline = time.monotonic() + self.settings.active_seconds
     actions = 0
     failures = 0
@@ -133,6 +138,48 @@ class Engine:
         raise RunCancelled("Run was superseded")
       if time.monotonic() >= deadline:
         raise RunLimit("Active execution time limit reached.")
+
+    def capture() -> Step:
+      nonlocal pending
+      if pending is not None:
+        raise RuntimeError("The previous capture has not been recorded.")
+
+      self.store.refresh()
+      approved = self.store.approved()
+      started = time.monotonic()
+      frame = self.platform.capture(approved)
+      capture_seconds = time.monotonic() - started
+
+      trace: dict[str, object] = {
+        "run_id": run_id,
+        "step": step,
+        "frame_width": frame.width,
+        "frame_height": frame.height,
+        "frame_bytes": len(frame.png),
+        "capture_seconds": capture_seconds,
+      }
+      shot = Step(approved, frame, started, trace)
+      pending = shot
+      trace["bundle_id"] = self.platform.frontmost_app()
+      return shot
+
+    async def record(shot: Step, outcome: str) -> None:
+      nonlocal pending, step
+      if pending is not shot:
+        raise RuntimeError("Cannot record a step that is not pending.")
+
+      shot.trace["outcome"] = outcome
+      event = Event(
+        "metrics",
+        "Step recorded",
+        metrics=dict(shot.trace),
+        snapshot=Snapshot(run_id, step, shot.frame.png),
+      )
+
+      # Delivery may fail after the sink has already consumed the event.
+      pending = None
+      step += 1
+      await emit(event)
 
     async def pause(message: str, *, limit: bool = False) -> None:
       nonlocal deadline, actions, failures, repeats, previous_signature

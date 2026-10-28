@@ -9,7 +9,7 @@ import pytest
 
 from fsd.approval.store import ApprovalStore
 from fsd.operator import engine as engine_module
-from fsd.operator.client import InvalidDecision
+from fsd.operator.client import InferenceError, InvalidDecision
 from fsd.operator.config import Settings
 from fsd.operator.context import Observation, Session
 from fsd.operator.contracts import Event, Hold, ModelResult, Reply, TypeText, VerificationResult
@@ -437,6 +437,59 @@ def run_engine(
 
 def steps(recorder: Recorder) -> list[dict[str, object]]:
   return [e.metrics for e in recorder.events if e.kind == "metrics" and e.metrics is not None]
+
+
+@pytest.mark.parametrize(
+  ("interruption", "terminal"),
+  [
+    ("inference_error", "failed"),
+    ("inference_cancel", "cancelled"),
+    ("progress_cancel", "cancelled"),
+  ],
+)
+def test_interrupted_capture_is_traced_before_terminal_event(
+  tmp_path: Path, interruption: str, terminal: str
+) -> None:
+  # A captured frame must remain diagnosable even if no input is performed.
+  platform, store = desktop(tmp_path)
+  settings = Settings(verify_settle_ms=0)
+  control = Control()
+  recorder = Recorder()
+
+  class InterruptedClient(ScriptedClient):
+    async def decide(
+      self, observation: Observation, control: Control, correction: str = ""
+    ) -> ModelResult:
+      if interruption == "inference_error":
+        raise InferenceError("Inference unavailable")
+      if interruption == "inference_cancel":
+        control.cancel()
+      return await super().decide(observation, control, correction)
+
+  async def emit(event: Event) -> Reply | None:
+    if interruption == "progress_cancel" and event.kind == "progress":
+      control.cancel()
+    return await recorder(event)
+
+  asyncio.run(
+    Engine(platform, store, InterruptedClient([decision()]), settings).run(
+      "Inspect", Session(settings), control, emit
+    )
+  )
+
+  assert len(platform.capture_requests) == 1
+  assert platform.actions == []
+  assert recorder.events[-1].kind == terminal
+  records = steps(recorder)
+  assert len(records) == 1
+  assert records[0].get("outcome") == "interrupted"
+  assert records[0].get("step") == 0
+  snapshot = recorder.events[-2].snapshot
+  assert snapshot is not None
+  assert snapshot.png == b"frame-0"
+  assert snapshot.step == 0
+  assert snapshot.run_id == records[0]["run_id"]
+  assert recorder.events[-1].metrics == {"run_id": snapshot.run_id}
 
 
 def test_single_refusal_returns_hint_without_pausing(tmp_path: Path) -> None:
