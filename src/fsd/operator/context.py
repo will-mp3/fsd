@@ -22,7 +22,8 @@ be supported by what you see, not merely by having issued the intended last acti
 A hold lasts at most {MAX_HOLD_MS} ms and holds just one ordinary key. No action remains
 active during inference. Preserve useful discoveries in notes (at most 2000 chars).
 Notes are fallible; fresh observations take precedence. Images are labeled previous
-and current. Only current may be used to choose action coordinates.
+and current. Only current may be used to choose action coordinates. failed_strategies
+lists recent actions that produced no visible progress; do not repeat them unchanged.
 """
 SYSTEM_PROMPT += "\nSupported ordinary keys: " + ", ".join(sorted(SUPPORTED_KEYS))
 
@@ -43,6 +44,7 @@ class Session:
     self.history: deque[dict[str, object]] = deque(maxlen=settings.history_size)
     self.goals: deque[str] = deque(maxlen=4)
     self.guidance: deque[str] = deque(maxlen=4)
+    self.failed: deque[dict[str, object]] = deque(maxlen=5)
     self._frame: Frame | None = None
     self._approved: frozenset[str] = frozenset()
 
@@ -52,6 +54,7 @@ class Session:
     self.goal = goal
     self.goals.append(goal)
     self.guidance.clear()
+    self.failed.clear()
     self.feedback = "New task; inspect the current screen before acting."
     self._frame = None
 
@@ -64,6 +67,17 @@ class Session:
   def notice(self, text: str) -> None:
     self.feedback = text
     self._frame = None
+
+  def strategy_failed(self, decision: Decision) -> None:
+    self.failed.append(
+      {
+        "action": decision.action.model_dump() if decision.action else None,
+        "expected": decision.expected,
+      }
+    )
+
+  def progressed(self) -> None:
+    self.failed.clear()
 
   def record(self, decision: Decision, status: str) -> None:
     self.notes = decision.notes
@@ -88,6 +102,7 @@ class Session:
         "feedback": self.feedback,
         "guidance": list(self.guidance),
         "history": list(self.history),
+        "failed_strategies": list(self.failed),
         "current_image": {"width": frame.width, "height": frame.height},
       }
     )

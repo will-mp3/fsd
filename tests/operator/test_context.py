@@ -105,3 +105,47 @@ def test_observation_is_a_snapshot_of_session_context() -> None:
   assert observation.current.png == b"second"
   assert observation.previous is not None
   assert observation.previous.png == b"first"
+
+
+def test_failed_strategies_keep_the_newest_five_in_model_context() -> None:
+  session = Session(Settings())
+  session.begin("Open the document")
+  for index in range(7):
+    decision = opening_decision().model_copy(update={"expected": f"Document {index} opens"})
+    session.strategy_failed(decision)
+
+  data = json.loads(session.observe(frame(b"a"), frozenset({"one"})).text)
+
+  assert [entry["expected"] for entry in data["failed_strategies"]] == [
+    "Document 2 opens",
+    "Document 3 opens",
+    "Document 4 opens",
+    "Document 5 opens",
+    "Document 6 opens",
+  ]
+  assert data["failed_strategies"][-1] == {
+    "action": {"kind": "key", "combo": "return"},
+    "expected": "Document 6 opens",
+  }
+
+
+def test_visible_progress_clears_failed_strategies() -> None:
+  session = Session(Settings())
+  session.begin("Open the document")
+  session.strategy_failed(opening_decision())
+
+  session.progressed()
+
+  data = json.loads(session.observe(frame(b"a"), frozenset()).text)
+  assert data["failed_strategies"] == []
+
+
+def test_new_goal_clears_failed_strategies() -> None:
+  session = Session(Settings())
+  session.begin("Open the document")
+  session.strategy_failed(opening_decision())
+
+  session.begin("Another goal")
+
+  data = json.loads(session.observe(frame(b"b"), frozenset()).text)
+  assert data["failed_strategies"] == []
