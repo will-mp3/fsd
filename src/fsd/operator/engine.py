@@ -114,11 +114,13 @@ class Engine:
     control: Control,
     emit: EventSink,
   ) -> None:
+    run_id = secrets.token_hex(8)
     if self.input_uncertain:
       await emit(
         Event(
           "failed",
           "Input release failed earlier. Check keyboard state and restart fsd.",
+          metrics={"run_id": run_id},
         )
       )
       return
@@ -127,7 +129,6 @@ class Engine:
 
     token = object()
     self._active = token
-    run_id = secrets.token_hex(8)
     step = 0
     pending: Step | None = None
     deadline = time.monotonic() + self.settings.active_seconds
@@ -187,6 +188,10 @@ class Engine:
       pending = None
       step += 1
       await emit(event)
+
+    async def record_interruption() -> None:
+      if pending is not None:
+        await record(pending, "interrupted")
 
     async def pause(message: str, *, limit: bool = False, note: str | None = None) -> None:
       nonlocal deadline, actions, failures, repeats, previous_signature, acted_on, last_decision
@@ -376,20 +381,31 @@ class Engine:
             await pause("The action changed focus to an unapproved or unidentified app.")
 
         except (RunLimit, TimeoutError):
+          await record_interruption()
           await pause("The active run budget has been reached.", limit=True)
 
     except RunCancelled:
-      await emit(Event("cancelled", "Task cancelled; session remains open."))
+      await record_interruption()
+      await emit(
+        Event(
+          "cancelled",
+          "Task cancelled; session remains open.",
+          metrics={"run_id": run_id},
+        )
+      )
     except ReleaseError as exc:
       self.input_uncertain = True
+      await record_interruption()
       await emit(
         Event(
           "failed",
           str(exc) + " Check keyboard state and restart fsd before more input.",
+          metrics={"run_id": run_id},
         )
       )
     except (InferenceError, PlatformError, ApprovalStoreError, ValueError, RuntimeError) as exc:
-      await emit(Event("failed", str(exc)))
+      await record_interruption()
+      await emit(Event("failed", str(exc), metrics={"run_id": run_id}))
     finally:
       if self._active is token:
         self._active = None

@@ -273,6 +273,18 @@ def test_failed_release_blocks_later_goals(tmp_path: Path) -> None:
   assert recorder.events[-1].kind == "failed"
   assert "restart" in recorder.events[-1].message
 
+  first_failure = next(i for i, event in enumerate(recorder.events) if event.kind == "failed")
+  trace_event = recorder.events[first_failure - 1]
+  assert trace_event.metrics is not None
+  assert trace_event.metrics.get("outcome") == "interrupted"
+  assert trace_event.snapshot is not None
+  assert trace_event.snapshot.png == b"frame-0"
+  first_run_id = trace_event.snapshot.run_id
+  assert recorder.events[first_failure].metrics == {"run_id": first_run_id}
+  assert recorder.events[-1].metrics is not None
+  second_run_id = recorder.events[-1].metrics.get("run_id")
+  assert isinstance(second_run_id, str) and second_run_id != first_run_id
+
 
 def test_metrics_distinguish_capture_inference_and_action_time(
   tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -453,6 +465,7 @@ def test_help_events_keep_run_identity_after_continuation(tmp_path: Path) -> Non
   assert isinstance(run_id, str) and run_id
   assert help_events[1].metrics == {"run_id": run_id}
   assert recorder.events[-1].kind == "cancelled"
+  assert recorder.events[-1].metrics == {"run_id": run_id}
 
 
 @pytest.mark.parametrize("phase", ["decide", "verify"])
