@@ -1,5 +1,8 @@
+import io
 from collections import deque
 from pathlib import Path
+
+from PIL import Image
 
 from fsd.approval.store import ApprovalStore
 from fsd.operator.context import Observation
@@ -79,6 +82,22 @@ def desktop(tmp_path: Path) -> tuple[FakePlatform, ApprovalStore]:
   store = ApprovalStore(tmp_path / "approvals.json")
   store.approve("app")
   frames = [Frame(f"frame-{n}".encode(), 100, 100, Rect(0, 0, 100, 100)) for n in range(30)]
+  platform = FakePlatform(
+    frontmost="app", frames=frames, windows=[WindowInfo("app", Rect(0, 0, 100, 100), 0)]
+  )
+  return platform, store
+
+
+def png(shade: int) -> bytes:
+  buffer = io.BytesIO()
+  Image.new("L", (100, 100), shade).save(buffer, format="PNG")
+  return buffer.getvalue()
+
+
+def still_desktop(tmp_path: Path, shades: list[int]) -> tuple[FakePlatform, ApprovalStore]:
+  store = ApprovalStore(tmp_path / "approvals.json")
+  store.approve("app")
+  frames = [Frame(png(shade), 100, 100, Rect(0, 0, 100, 100)) for shade in shades]
   platform = FakePlatform(
     frontmost="app", frames=frames, windows=[WindowInfo("app", Rect(0, 0, 100, 100), 0)]
   )

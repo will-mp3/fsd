@@ -69,7 +69,7 @@ def test_session_accepts_followup_without_restarting(tmp_path: Path) -> None:
   client = ScriptedClient([decision("done"), decision("done")])
   commands = iter(["Open the document", "Now scroll it", "/exit"])
   output = io.StringIO()
-  settings = Settings()
+  settings = Settings(verify_settle_ms=0)
 
   asyncio.run(
     conversation(
@@ -100,7 +100,7 @@ def test_help_continues_same_goal_with_fresh_observation(
   platform, store = desktop(tmp_path)
   client = ScriptedClient([decision("help"), decision("done")])
   commands = iter(["Open it", guidance, "/exit"])
-  settings = Settings()
+  settings = Settings(verify_settle_ms=0)
   session = Session(settings)
 
   asyncio.run(
@@ -126,7 +126,7 @@ def test_help_cancellation_and_exit_have_distinct_session_lifetimes(
   client = ScriptedClient([decision("help"), decision("done")])
   commands = iter(["First goal", reply, "Second goal", "/exit"])
   prompts: list[str] = []
-  settings = Settings()
+  settings = Settings(verify_settle_ms=0)
   output = io.StringIO()
 
   def read(prompt: str) -> str:
@@ -156,7 +156,7 @@ def test_idle_interrupt_and_invalid_commands_do_not_start_runs(tmp_path: Path) -
   commands: Iterator[str | BaseException] = iter(
     [KeyboardInterrupt(), "  ", "/unknown", "Actual goal", EOFError()]
   )
-  settings = Settings()
+  settings = Settings(verify_settle_ms=0)
 
   def read(prompt: str) -> str:
     item = next(commands)
@@ -177,7 +177,7 @@ def test_limit_requires_explicit_extension_before_inference_resumes(tmp_path: Pa
   client = ScriptedClient([decision(), decision("done")])
   commands = iter(["Open it", "/continue", "/extend", "/exit"])
   prompts: list[str] = []
-  settings = Settings(action_limit=1)
+  settings = Settings(verify_settle_ms=0, action_limit=1)
 
   def read(prompt: str) -> str:
     prompts.append(prompt)
@@ -197,7 +197,7 @@ def test_diagnostics_receive_metrics_while_terminal_shows_progress(tmp_path: Pat
   platform, store = desktop(tmp_path)
   client = ScriptedClient([decision(), decision("done")])
   commands = iter(["Open it", "/exit"])
-  settings = Settings()
+  settings = Settings(verify_settle_ms=0)
   metrics: list[dict[str, object]] = []
   output = io.StringIO()
 
@@ -226,7 +226,7 @@ def test_diagnostics_record_help_and_cancellation_without_message_text(tmp_path:
   help_decision = decision("help").model_copy(update={"message": "private-help-detail"})
   client = ScriptedClient([help_decision])
   commands = iter(["private-goal", "/cancel", "/exit"])
-  settings = Settings()
+  settings = Settings(verify_settle_ms=0)
   metrics: list[dict[str, object]] = []
 
   asyncio.run(
@@ -250,7 +250,7 @@ def test_diagnostics_record_failure_without_exception_text(tmp_path: Path) -> No
   platform, store = desktop(tmp_path)
   client = ScriptedClient([InferenceError("private-provider-detail")])
   commands = iter(["private-goal", "/exit"])
-  settings = Settings()
+  settings = Settings(verify_settle_ms=0)
   metrics: list[dict[str, object]] = []
 
   asyncio.run(
@@ -298,7 +298,7 @@ def test_launcher_uses_configured_model_and_closes_http_client(
     monkeypatch.setenv("FSD_METRICS_PATH", str(tmp_path / "metrics.jsonl"))
   else:
     monkeypatch.delenv("FSD_METRICS_PATH", raising=False)
-  settings = Settings(model="configured-test-model")
+  settings = Settings(verify_settle_ms=0, model="configured-test-model")
   monkeypatch.setattr(chat, "Settings", lambda: settings)
   requests: list[httpx.Request] = []
 

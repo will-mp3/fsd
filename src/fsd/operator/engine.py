@@ -1,6 +1,7 @@
 import asyncio
 import time
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 
 from fsd.approval.gate import ActionGate, GateRefused
 from fsd.approval.store import ApprovalStore, ApprovalStoreError
@@ -13,9 +14,11 @@ from fsd.operator.contracts import (
   Event,
   Hold,
   Key,
+  ModelResult,
   Reply,
   Scroll,
   TypeText,
+  VerificationResult,
   Wait,
 )
 from fsd.operator.control import Control, RunCancelled, controlled
@@ -27,6 +30,27 @@ EventSink = Callable[[Event], Awaitable[Reply | None]]
 
 class RunLimit(Exception):
   pass
+
+
+@dataclass
+class Step:
+  """One captured screen and the trace record it accumulates."""
+
+  approved: frozenset[str]
+  frame: Frame
+  started: float
+  trace: dict[str, object]
+
+
+def usage_metrics(result: ModelResult | VerificationResult) -> dict[str, object]:
+  return {
+    "encode_seconds": result.encode_seconds,
+    "request_seconds": result.request_seconds,
+    "input_tokens": result.input_tokens,
+    "cached_input_tokens": result.cached_input_tokens,
+    "output_tokens": result.output_tokens,
+    "cost": result.cost,
+  }
 
 
 class Engine:
