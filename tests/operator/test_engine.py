@@ -439,6 +439,38 @@ def steps(recorder: Recorder) -> list[dict[str, object]]:
   return [e.metrics for e in recorder.events if e.kind == "metrics" and e.metrics is not None]
 
 
+@pytest.mark.parametrize("phase", ["decide", "verify"])
+def test_two_invalid_responses_record_once_before_help(tmp_path: Path, phase: str) -> None:
+  # Retrying the same captured frame must not create a second trace step.
+  platform, store = desktop(tmp_path)
+  if phase == "decide":
+    client = ScriptedClient([InvalidDecision("empty"), InvalidDecision("schema")])
+  else:
+    client = ScriptedClient(
+      [decision("done")], [InvalidDecision("empty"), InvalidDecision("schema")]
+    )
+  recorder = Recorder([Reply(cancel=True)])
+  run_engine(platform, store, client, recorder)
+
+  assert platform.actions == []
+  assert [e.kind for e in recorder.events[-2:]] == ["help", "cancelled"]
+  records = steps(recorder)
+  assert len(records) == len(platform.capture_requests)
+  assert records[-1].get("outcome") == "invalid"
+  assert records[-1].get("invalid_cause") == "schema"
+  snapshots = [e.snapshot for e in recorder.events if e.snapshot is not None]
+  if phase == "decide":
+    assert len(client.observations) == 2
+    assert client.observations[0].current is client.observations[1].current
+    assert len(snapshots) == 1
+    assert snapshots[0].png == b"frame-0"
+  else:
+    assert len(client.verifications) == 2
+    assert client.verifications[0][1] is client.verifications[1][1]
+    assert len(snapshots) == 2
+    assert snapshots[-1].png == b"frame-1"
+
+
 @pytest.mark.parametrize(
   ("interruption", "terminal"),
   [

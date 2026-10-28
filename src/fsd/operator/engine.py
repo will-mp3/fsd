@@ -28,6 +28,7 @@ from fsd.platform.base import MANDATORY_CAPABILITIES, Frame, Platform, PlatformE
 from fsd.platform.held_input import ReleaseError
 
 EventSink = Callable[[Event], Awaitable[Reply | None]]
+CORRECTION = "Your last response was invalid. Return only a valid schema object."
 
 
 class RunLimit(Exception):
@@ -206,6 +207,23 @@ class Engine:
         deadline += time.monotonic() - started
       failures = repeats = 0
       previous_signature = None
+
+    async def ask[T](request: Callable[[str], Awaitable[T]], shot: Step) -> T | None:
+      for correction in ("", CORRECTION):
+        check()
+        try:
+          return await controlled(
+            request(correction),
+            control,
+            max(0, deadline - time.monotonic()),
+          )
+        except InvalidDecision as exc:
+          shot.trace["invalid_cause"] = exc.cause
+          if correction:
+            await record(shot, "invalid")
+            control.check()
+            await pause("The model returned two invalid responses; no action was performed.")
+      return None
 
     try:
       control.check()
