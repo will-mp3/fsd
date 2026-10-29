@@ -15,7 +15,7 @@ from fsd.approval.store import ApprovalStore
 from fsd.operator.client import OpenRouterClient
 from fsd.operator.config import Settings
 from fsd.operator.context import Session
-from fsd.operator.contracts import Event, Reply
+from fsd.operator.contracts import Event, Reply, Snapshot
 from fsd.operator.control import Control
 from fsd.operator.engine import Engine
 from fsd.platform.base import Platform
@@ -48,12 +48,15 @@ async def conversation(
   read: Callable[[str], str],
   out: TextIO,
   diagnostics: Callable[[dict[str, object]], None] | None = None,
+  archive: Callable[[Snapshot], None] | None = None,
 ) -> None:
   exit_requested = False
   display("fsd: enter a goal; /exit ends the session. Ctrl-C cancels the current task.", out)
 
   async def emit(event: Event) -> Reply | None:
     nonlocal exit_requested
+    if archive is not None and event.snapshot is not None:
+      archive(event.snapshot)
     if diagnostics is not None:
       metrics = dict(event.metrics or {})
       if event.kind in {"action", "help", "done", "failed", "cancelled"}:
@@ -112,14 +115,16 @@ async def conversation(
 
 
 class DiagnosticsError(Exception):
-  pass
+  def __init__(self, setting: str) -> None:
+    super().__init__(setting)
+    self.setting = setting
 
 
-def _diagnostic_io[T](operation: Callable[[], T]) -> T:
+def _diagnostic_io[T](operation: Callable[[], T], setting: str = "FSD_METRICS_PATH") -> T:
   try:
     return operation()
   except OSError:
-    raise DiagnosticsError from None
+    raise DiagnosticsError(setting) from None
 
 
 def launch_chat(platform: Platform, store: ApprovalStore, out: TextIO, err: TextIO) -> int:
@@ -145,14 +150,27 @@ def launch_chat(platform: Platform, store: ApprovalStore, out: TextIO, err: Text
           _diagnostic_io(partial(stream.write, line))
           _diagnostic_io(stream.flush)
 
+      archive: Callable[[Snapshot], None] | None = None
+      trace_dir = os.environ.get("FSD_TRACE_DIR")
+      if trace_dir:
+        root = Path(trace_dir)
+
+        def save(snapshot: Snapshot) -> None:
+          folder = root / snapshot.run_id
+          _diagnostic_io(partial(folder.mkdir, parents=True, exist_ok=True), "FSD_TRACE_DIR")
+          target = folder / f"{snapshot.step}.png"
+          _diagnostic_io(partial(target.write_bytes, snapshot.png), "FSD_TRACE_DIR")
+
+        archive = save
+
       async with httpx.AsyncClient() as http:
         client = OpenRouterClient(http, key, settings)
         engine = Engine(platform, store, client, settings)
-        await conversation(engine, Session(settings), input, out, record)
+        await conversation(engine, Session(settings), input, out, record, archive)
 
   try:
     asyncio.run(start())
-  except DiagnosticsError:
-    print("fsd: could not write diagnostic records; check FSD_METRICS_PATH.", file=err)
+  except DiagnosticsError as exc:
+    print(f"fsd: could not write diagnostic records; check {exc.setting}.", file=err)
     return 2
   return 0

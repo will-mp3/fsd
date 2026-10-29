@@ -211,10 +211,12 @@ def test_diagnostics_receive_metrics_while_terminal_shows_progress(tmp_path: Pat
     )
   )
 
-  assert len(metrics) == 4
-  assert metrics[1]["action"] == "key"
-  assert metrics[1]["status"] == "action"
-  assert metrics[-1] == {"status": "done"}
+  assert len(metrics) == 5
+  assert metrics[0]["status"] == "action"
+  assert metrics[0]["action"] == "key"
+  assert [m["outcome"] for m in metrics[1:4]] == ["performed", "claimed_done", "done"]
+  assert metrics[-1]["status"] == "done"
+  assert metrics[-1]["run_id"] == metrics[1]["run_id"]
   assert "Continue" in output.getvalue()
   assert "Performed key" in output.getvalue()
   assert "Task complete" in output.getvalue()
@@ -239,10 +241,7 @@ def test_diagnostics_record_help_and_cancellation_without_message_text(tmp_path:
     )
   )
 
-  assert [row for row in metrics if "status" in row] == [
-    {"status": "help"},
-    {"status": "cancelled"},
-  ]
+  assert [row["status"] for row in metrics if "status" in row] == ["help", "cancelled"]
   assert "private-" not in json.dumps(metrics)
 
 
@@ -263,7 +262,11 @@ def test_diagnostics_record_failure_without_exception_text(tmp_path: Path) -> No
     )
   )
 
-  assert metrics == [{"status": "failed"}]
+  assert len(metrics) == 2
+  assert metrics[0]["outcome"] == "interrupted"
+  assert metrics[0]["step"] == 0
+  assert metrics[1] == {"status": "failed", "run_id": metrics[0]["run_id"]}
+  assert "private-" not in json.dumps(metrics)
 
 
 @pytest.mark.parametrize("key", [None, "", " \t "])
@@ -294,6 +297,7 @@ def test_launcher_uses_configured_model_and_closes_http_client(
   tmp_path: Path, monkeypatch: pytest.MonkeyPatch, reader_fails: bool, metrics_enabled: bool
 ) -> None:
   monkeypatch.setenv("OPENROUTER_API_KEY", "  test-key  ")
+  monkeypatch.delenv("FSD_TRACE_DIR", raising=False)
   if metrics_enabled:
     monkeypatch.setenv("FSD_METRICS_PATH", str(tmp_path / "metrics.jsonl"))
   else:
@@ -301,6 +305,9 @@ def test_launcher_uses_configured_model_and_closes_http_client(
   settings = Settings(verify_settle_ms=0, model="configured-test-model")
   monkeypatch.setattr(chat, "Settings", lambda: settings)
   requests: list[httpx.Request] = []
+  contents = iter(
+    [decision("done").model_dump_json(), json.dumps({"complete": True, "evidence": "Done"})] * 2
+  )
 
   def handle(request: httpx.Request) -> httpx.Response:
     requests.append(request)
@@ -312,7 +319,7 @@ def test_launcher_uses_configured_model_and_closes_http_client(
         "choices": [
           {
             "finish_reason": "stop",
-            "message": {"content": decision("done").model_dump_json()},
+            "message": {"content": next(contents)},
           }
         ]
       },
@@ -340,7 +347,7 @@ def test_launcher_uses_configured_model_and_closes_http_client(
     assert launch_chat(platform, store, out, err) == 0
 
   assert http.is_closed
-  assert len(requests) == 2
+  assert len(requests) == 4
   assert out.getvalue().count("Task complete") == 2
   assert err.getvalue() == ""
   assert "test-key" not in out.getvalue()

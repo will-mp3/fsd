@@ -16,7 +16,8 @@ from tests.operator.helpers import decision, desktop
 def run_chat(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Callable[[], tuple[int, str]]:
   monkeypatch.setenv("OPENROUTER_API_KEY", "private-api-key")
   monkeypatch.delenv("FSD_METRICS_PATH", raising=False)
-  choices = iter(
+  monkeypatch.delenv("FSD_TRACE_DIR", raising=False)
+  contents = iter(
     [
       Decision.model_validate(
         {
@@ -27,8 +28,9 @@ def run_chat(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Callable[[], tu
           "notes": "private-notes",
           "previous_result": "none",
         }
-      ),
-      decision("done"),
+      ).model_dump_json(),
+      decision("done").model_dump_json(),
+      json.dumps({"complete": True, "evidence": "private-evidence"}),
     ]
   )
 
@@ -36,9 +38,7 @@ def run_chat(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Callable[[], tu
     return httpx.Response(
       200,
       json={
-        "choices": [
-          {"finish_reason": "stop", "message": {"content": next(choices).model_dump_json()}}
-        ],
+        "choices": [{"finish_reason": "stop", "message": {"content": next(contents)}}],
         "usage": {"prompt_tokens": 10, "completion_tokens": 5, "cost": 0.0001},
       },
     )
@@ -70,7 +70,7 @@ def test_metrics_append_and_flush_without_private_content(
   def read(prompt: str) -> str:
     command = next(commands)
     if command == "/exit":
-      assert len(path.read_text(encoding="utf-8").splitlines()) == 5
+      assert len(path.read_text(encoding="utf-8").splitlines()) == 6
     return command
 
   monkeypatch.setattr("builtins.input", read)
@@ -79,23 +79,41 @@ def test_metrics_append_and_flush_without_private_content(
   text = path.read_text(encoding="utf-8")
   rows = [json.loads(line) for line in text.splitlines()]
   assert rows[0] == {"existing": True}
-  assert rows[1]["input_tokens"] == 10
-  assert rows[1]["cost"] == 0.0001
-  assert rows[1]["previous_result"] == "none"
-  assert rows[2]["action"] == "type"
-  assert "execution_seconds" in rows[2]
-  assert rows[3]["output_tokens"] == 5
+  assert rows[1]["status"] == "action"
+  assert rows[1]["action"] == "type"
+  assert rows[2]["outcome"] == "performed"
+  assert rows[2]["input_tokens"] == 10
+  assert rows[2]["cost"] == 0.0001
+  assert rows[2]["previous_result"] == "none"
+  assert rows[3]["outcome"] == "claimed_done"
   assert rows[3]["previous_result"] == "success"
-  assert rows[4] == {"status": "done"}
+  assert rows[4]["outcome"] == "done"
+  assert rows[4]["decision"] == "verify"
+  assert rows[5]["status"] == "done"
   assert "private-" not in text
   allowed = {
+    "run_id",
+    "step",
+    "bundle_id",
+    "frame_width",
+    "frame_height",
+    "frame_bytes",
+    "images_sent",
     "capture_seconds",
+    "encode_seconds",
     "request_seconds",
     "screenshot_to_decision_seconds",
     "input_tokens",
+    "cached_input_tokens",
     "output_tokens",
     "cost",
+    "decision",
     "action",
+    "outcome",
+    "invalid_cause",
+    "refusal",
+    "visible_change",
+    "stuck",
     "execution_seconds",
     "screenshot_to_action_seconds",
     "status",
@@ -161,3 +179,56 @@ def test_metrics_io_failure_is_visible_and_stream_is_closed(
     assert stream.closed
   finally:
     io.StringIO.close(stream)
+
+
+@pytest.mark.parametrize("metrics_enabled", [False, True])
+def test_trace_dir_archives_one_frame_per_step(
+  tmp_path: Path,
+  monkeypatch: pytest.MonkeyPatch,
+  run_chat: Callable[[], tuple[int, str]],
+  metrics_enabled: bool,
+) -> None:
+  trace = tmp_path / "trace"
+  monkeypatch.setenv("FSD_TRACE_DIR", str(trace))
+  metrics = tmp_path / "metrics.jsonl"
+  if metrics_enabled:
+    monkeypatch.setenv("FSD_METRICS_PATH", str(metrics))
+
+  assert run_chat() == (0, "")
+  assert trace.is_dir()
+  (run,) = trace.iterdir()
+  assert sorted(p.name for p in run.iterdir()) == ["0.png", "1.png", "2.png"]
+  assert [(run / name).read_bytes() for name in ("0.png", "1.png", "2.png")] == [
+    b"frame-0",
+    b"frame-1",
+    b"frame-2",
+  ]
+  if metrics_enabled:
+    rows = [json.loads(line) for line in metrics.read_text(encoding="utf-8").splitlines()]
+    steps = [row for row in rows if "step" in row]
+    assert [(row["run_id"], row["step"]) for row in steps] == [
+      (run.name, 0),
+      (run.name, 1),
+      (run.name, 2),
+    ]
+
+
+def test_no_trace_dir_writes_no_frames(
+  tmp_path: Path, run_chat: Callable[[], tuple[int, str]]
+) -> None:
+  assert run_chat() == (0, "")
+  assert list(tmp_path.rglob("*.png")) == []
+
+
+def test_unwritable_trace_dir_names_the_setting(
+  tmp_path: Path,
+  monkeypatch: pytest.MonkeyPatch,
+  run_chat: Callable[[], tuple[int, str]],
+) -> None:
+  blocker = tmp_path / "file"
+  blocker.write_text("not a directory", encoding="utf-8")
+  monkeypatch.setenv("FSD_TRACE_DIR", str(blocker / "trace"))
+  status, err = run_chat()
+  assert status == 2
+  assert "FSD_TRACE_DIR" in err
+  assert "FSD_METRICS_PATH" not in err
