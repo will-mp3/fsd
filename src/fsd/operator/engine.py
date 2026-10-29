@@ -3,6 +3,7 @@ import secrets
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from functools import partial
 
 from fsd.approval.gate import ActionGate, GateRefused
 from fsd.approval.store import ApprovalStore, ApprovalStoreError
@@ -25,8 +26,8 @@ from fsd.operator.contracts import (
   Wait,
 )
 from fsd.operator.control import Control, RunCancelled, controlled
-from fsd.operator.frames import Thumbnail
-from fsd.operator.recovery import Recovery
+from fsd.operator.frames import Thumbnail, thumbnail
+from fsd.operator.recovery import REFUSAL_HINTS, STUCK_FEEDBACK, Recovery
 from fsd.platform.base import MANDATORY_CAPABILITIES, Frame, Platform, PlatformError
 from fsd.platform.held_input import ReleaseError
 
@@ -137,8 +138,6 @@ class Engine:
     recovery = Recovery(self.settings)
     acted_on: Thumbnail | None = None
     last_decision: Decision | None = None
-    repeats = 0
-    previous_signature: tuple[bytes, str] | None = None
 
     def check() -> None:
       control.check()
@@ -194,7 +193,7 @@ class Engine:
         await record(pending, "interrupted")
 
     async def pause(message: str, *, limit: bool = False, note: str | None = None) -> None:
-      nonlocal deadline, actions, failures, repeats, previous_signature, acted_on, last_decision
+      nonlocal deadline, actions, failures, acted_on, last_decision
       control.check()
       started = time.monotonic()
 
@@ -223,8 +222,7 @@ class Engine:
       else:
         deadline += time.monotonic() - started
 
-      failures = repeats = 0
-      previous_signature = None
+      failures = 0
       recovery.reset()
       acted_on = None
       last_decision = None
@@ -262,55 +260,43 @@ class Engine:
           if actions >= self.settings.action_limit:
             raise RunLimit("Action limit reached.")
 
-          self.store.refresh()
-          approved = self.store.approved()
-          capture_started = time.monotonic()
-          frame = self.platform.capture(approved)
-          capture_seconds = time.monotonic() - capture_started
-          observation = session.observe(frame, approved)
+          shot = capture()
+          current = thumbnail(shot.frame)
+          seen = recovery.observe(current, acted_on)
+          acted_on = None
 
-          result = None
-          for correction in (
-            "",
-            "Your last response was invalid. Return only a valid schema object.",
-          ):
-            try:
-              result = await controlled(
-                self.client.decide(observation, control, correction),
-                control,
-                max(0, deadline - time.monotonic()),
-              )
-              break
-            except InvalidDecision:
-              if correction:
-                await pause("The model returned two invalid decisions; no action was performed.")
+          if seen.visible_change is not None:
+            shot.trace["visible_change"] = seen.visible_change
+          if seen.progress:
+            session.progressed()
+          if seen.escalation != "continue":
+            shot.trace["stuck"] = seen.escalation
+            if last_decision is not None:
+              session.strategy_failed(last_decision)
+            if seen.escalation == "escalate":
+              await record(shot, "help")
+              await pause("Repeated attempts are not making progress. Guidance is needed.")
+              continue
+            session.notice(STUCK_FEEDBACK)
 
+          observation = session.observe(shot.frame, shot.approved)
+          shot.trace["images_sent"] = 1 if observation.previous is None else 2
+          result = await ask(partial(self.client.decide, observation, control), shot)
           if result is None:
             continue
 
+          decision = result.decision
+          shot.trace.update(usage_metrics(result))
+          shot.trace["screenshot_to_decision_seconds"] = time.monotonic() - shot.started
+          shot.trace["decision"] = decision.kind
+          shot.trace["previous_result"] = decision.previous_result
+
           check()
           self.store.refresh()
-          if approved != self.store.approved():
+          if shot.approved != self.store.approved():
             session.notice("App approvals changed. Reconsider using the new screenshot.")
+            await record(shot, "approvals_changed")
             continue
-
-          decision = result.decision
-          await emit(
-            Event(
-              "metrics",
-              "Decision received",
-              metrics={
-                "capture_seconds": capture_seconds,
-                "request_seconds": result.request_seconds,
-                "screenshot_to_decision_seconds": time.monotonic() - capture_started,
-                "input_tokens": result.input_tokens,
-                "output_tokens": result.output_tokens,
-                "cost": result.cost,
-                "previous_result": decision.previous_result,
-              },
-            )
-          )
-          check()
 
           if decision.previous_result == "failure":
             failures += 1
@@ -319,60 +305,115 @@ class Engine:
 
           if decision.kind == "help":
             session.notes = decision.notes
+            await record(shot, "help")
             await pause(decision.message)
             continue
 
           if decision.kind == "done":
-            session.record(decision, "completed")
-            await emit(Event("done", decision.message))
-            return
+            await record(shot, "claimed_done")
+            check()
+
+            settle = self.settings.verify_settle_ms / 1000
+            if settle:
+              await controlled(asyncio.sleep(settle), control, max(0, deadline - time.monotonic()))
+            check()
+
+            proof = capture()
+            proof.trace["images_sent"] = 1
+            proof.trace["decision"] = "verify"
+            verification = await ask(partial(self.client.verify, goal, proof.frame, control), proof)
+            if verification is None:
+              continue
+
+            proof.trace.update(usage_metrics(verification))
+            check()
+            self.store.refresh()
+            if proof.approved != self.store.approved():
+              session.notice("App approvals changed. Reconsider using the new screenshot.")
+              await record(proof, "approvals_changed")
+              continue
+
+            if verification.verdict.complete:
+              await record(proof, "done")
+              check()
+              session.record(decision, "completed")
+              await emit(Event("done", decision.message, metrics={"run_id": run_id}))
+              return
+
+            evidence = verification.verdict.evidence
+            session.record(decision, "completion rejected: " + evidence)
+            session.notice("Completion was not confirmed: " + evidence)
+            await record(proof, "rejected_done")
+            if recovery.rejected_done():
+              await pause(
+                "The task was reported complete twice, but the screen did not confirm it."
+              )
+            continue
 
           action = decision.action
           assert action is not None
-          signature = (frame.png, action.model_dump_json())
-          repeats = repeats + 1 if signature == previous_signature else 0
-          previous_signature = signature
-
-          if failures >= self.settings.recovery_limit or repeats >= self.settings.recovery_limit:
+          if failures >= self.settings.recovery_limit:
+            await record(shot, "help")
             await pause("Repeated attempts are not making progress. Guidance is needed.")
             continue
 
           await emit(Event("progress", decision.message))
           check()
           self.store.refresh()
-          if approved != self.store.approved():
+          if shot.approved != self.store.approved():
             session.notice("Approvals changed before execution; choose again from a fresh image.")
+            await record(shot, "approvals_changed")
             continue
 
           before_owner = self.platform.frontmost_app()
           actions += 1
+          shot.trace["action"] = action.kind
           started_action = time.monotonic()
 
           try:
-            await self._execute(action, frame, check, control)
+            await self._execute(action, shot.frame, check, control)
           except ReleaseError:
             session.record(decision, "release failed; input state uncertain")
             raise
           except (GateRefused, ValueError) as exc:
-            session.record(decision, "refused or interrupted; inspect before retrying")
-            await pause(str(exc))
+            if isinstance(exc, GateRefused):
+              hint = REFUSAL_HINTS[exc.reason]
+              shot.trace["refusal"] = exc.reason
+            else:
+              hint = str(exc)
+              shot.trace["refusal"] = "limit"
+
+            session.record(decision, "refused: " + hint)
+            session.notice(hint)
+            await record(shot, "refused")
+            if recovery.refused():
+              await pause(
+                f"Actions keep being refused. Last refusal: {exc}",
+                note="Repeated refusals; the owner was asked for help. " + hint,
+              )
             continue
           except (RunCancelled, RunLimit, PlatformError, RuntimeError, ApprovalStoreError):
             session.record(decision, "interrupted; input may have partially occurred")
             raise
 
+          recovery.performed()
+          acted_on = current
+          last_decision = decision
           session.record(decision, "performed; outcome awaits next observation")
           await emit(
             Event(
               "action",
               f"Performed {action.kind}",
               metrics={
+                "run_id": run_id,
                 "action": action.kind,
                 "execution_seconds": time.monotonic() - started_action,
-                "screenshot_to_action_seconds": started_action - capture_started,
+                "screenshot_to_action_seconds": started_action - shot.started,
               },
             )
           )
+          await record(shot, "performed")
+          check()
 
           after_owner = self.platform.frontmost_app()
           if after_owner != before_owner and (

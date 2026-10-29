@@ -246,7 +246,8 @@ def test_partial_typing_is_recorded_before_cancellation(tmp_path: Path) -> None:
   assert recorder.events[-1].kind == "cancelled"
 
 
-def test_failed_release_blocks_later_goals(tmp_path: Path) -> None:
+@pytest.mark.parametrize("trace_fails", [False, True])
+def test_failed_release_blocks_later_goals(tmp_path: Path, trace_fails: bool) -> None:
   platform, store = desktop(tmp_path)
 
   def failed_hold(key: str, duration_ms: int, check: Callable[[], None]) -> None:
@@ -262,8 +263,18 @@ def test_failed_release_blocks_later_goals(tmp_path: Path) -> None:
   recorder = Recorder()
   session = Session(settings)
 
+  async def emit(event: Event) -> Reply | None:
+    reply = await recorder(event)
+    if trace_fails and event.snapshot is not None:
+      raise OSError("Trace unavailable")
+    return reply
+
   async def scenario() -> None:
-    await engine.run("Move", session, Control(), recorder)
+    if trace_fails:
+      with pytest.raises(OSError, match="Trace unavailable"):
+        await engine.run("Move", session, Control(), emit)
+    else:
+      await engine.run("Move", session, Control(), emit)
     await engine.run("Try again", session, Control(), recorder)
 
   asyncio.run(scenario())
@@ -273,14 +284,18 @@ def test_failed_release_blocks_later_goals(tmp_path: Path) -> None:
   assert recorder.events[-1].kind == "failed"
   assert "restart" in recorder.events[-1].message
 
-  first_failure = next(i for i, event in enumerate(recorder.events) if event.kind == "failed")
-  trace_event = recorder.events[first_failure - 1]
+  trace_events = [event for event in recorder.events if event.snapshot is not None]
+  assert len(trace_events) == 1
+  trace_event = trace_events[0]
   assert trace_event.metrics is not None
   assert trace_event.metrics.get("outcome") == "interrupted"
   assert trace_event.snapshot is not None
   assert trace_event.snapshot.png == b"frame-0"
   first_run_id = trace_event.snapshot.run_id
-  assert recorder.events[first_failure].metrics == {"run_id": first_run_id}
+  if not trace_fails:
+    first_failure = next(i for i, event in enumerate(recorder.events) if event.kind == "failed")
+    assert recorder.events[first_failure - 1] is trace_event
+    assert recorder.events[first_failure].metrics == {"run_id": first_run_id}
   assert recorder.events[-1].metrics is not None
   second_run_id = recorder.events[-1].metrics.get("run_id")
   assert isinstance(second_run_id, str) and second_run_id != first_run_id
@@ -449,6 +464,113 @@ def run_engine(
 
 def steps(recorder: Recorder) -> list[dict[str, object]]:
   return [e.metrics for e in recorder.events if e.kind == "metrics" and e.metrics is not None]
+
+
+def test_approval_change_during_progress_records_discarded_action(tmp_path: Path) -> None:
+  # Approval changes at the final await must block input and use the trace schema.
+  platform, store = desktop(tmp_path)
+  settings = Settings(verify_settle_ms=0)
+  client = ScriptedClient([decision(), decision("done")])
+  recorder = Recorder()
+
+  async def emit(event: Event) -> Reply | None:
+    if event.kind == "progress":
+      store.block("app")
+    return await recorder(event)
+
+  asyncio.run(
+    Engine(platform, store, client, settings).run("Inspect", Session(settings), Control(), emit)
+  )
+
+  assert platform.actions == []
+  assert platform.capture_requests == [frozenset({"app"}), frozenset(), frozenset()]
+  assert [record.get("outcome") for record in steps(recorder)] == [
+    "approvals_changed",
+    "claimed_done",
+    "done",
+  ]
+  assert recorder.events[-1].kind == "done"
+
+
+def test_trace_delivery_failure_is_not_retried_and_releases_active_run(tmp_path: Path) -> None:
+  # A sink can consume a record before failing; replay would duplicate the step.
+  platform, store = desktop(tmp_path)
+  settings = Settings(verify_settle_ms=0)
+  engine = Engine(platform, store, ScriptedClient([decision("done")] * 2), settings)
+  recorder = Recorder()
+  failed = False
+
+  async def emit(event: Event) -> Reply | None:
+    nonlocal failed
+    reply = await recorder(event)
+    if event.snapshot is not None and not failed:
+      failed = True
+      raise RuntimeError("Trace consumer failed")
+    return reply
+
+  async def scenario() -> None:
+    await engine.run("Inspect", Session(settings), Control(), emit)
+    assert recorder.events[-1].kind == "failed"
+    await engine.run("Inspect again", Session(settings), Control(), emit)
+
+  asyncio.run(scenario())
+
+  snapshots = [event.snapshot for event in recorder.events if event.snapshot is not None]
+  assert len(snapshots) == 3
+  assert len({(snapshot.run_id, snapshot.step) for snapshot in snapshots}) == 3
+  assert recorder.events[-1].kind == "done"
+
+
+@pytest.mark.parametrize("outcome", ["claimed_done", "done"])
+def test_cancellation_during_completion_trace_prevents_done(tmp_path: Path, outcome: str) -> None:
+  # Event delivery is an await boundary; cancellation there must still win.
+  platform, store = desktop(tmp_path)
+  settings = Settings(verify_settle_ms=0)
+  session = Session(settings)
+  control = Control()
+  client = ScriptedClient([decision("done")])
+  recorder = Recorder()
+
+  async def emit(event: Event) -> Reply | None:
+    if event.kind == "metrics" and event.metrics and event.metrics.get("outcome") == outcome:
+      control.cancel()
+    return await recorder(event)
+
+  asyncio.run(Engine(platform, store, client, settings).run("Inspect", session, control, emit))
+
+  assert recorder.events[-1].kind == "cancelled"
+  assert not any(event.kind == "done" for event in recorder.events)
+  assert not any(entry["status"] == "completed" for entry in session.history)
+  assert len(client.verifications) == (0 if outcome == "claimed_done" else 1)
+  assert len(steps(recorder)) == len(platform.capture_requests)
+
+
+def test_approval_change_during_verification_discards_verdict(tmp_path: Path) -> None:
+  # A verdict for an outdated approval set cannot finish the run.
+  platform, store = desktop(tmp_path)
+
+  class RevokingVerifier(ScriptedClient):
+    async def verify(
+      self, goal: str, frame: Frame, control: Control, correction: str = ""
+    ) -> VerificationResult:
+      result = await super().verify(goal, frame, control, correction)
+      if len(self.verifications) == 1:
+        store.block("app")
+      return result
+
+  client = RevokingVerifier([decision("done"), decision("done")])
+  recorder = Recorder()
+  run_engine(platform, store, client, recorder)
+
+  assert len(client.verifications) == 2
+  assert platform.capture_requests == [frozenset({"app"})] * 2 + [frozenset()] * 2
+  assert [record.get("outcome") for record in steps(recorder)] == [
+    "claimed_done",
+    "approvals_changed",
+    "claimed_done",
+    "done",
+  ]
+  assert recorder.events[-1].kind == "done"
 
 
 def test_help_events_keep_run_identity_after_continuation(tmp_path: Path) -> None:

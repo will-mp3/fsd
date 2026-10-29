@@ -1,5 +1,6 @@
 import io
 from collections import deque
+from collections.abc import Sequence
 from pathlib import Path
 
 from PIL import Image
@@ -32,8 +33,8 @@ def verdict(complete: bool = True) -> Verdict:
 class ScriptedClient:
   def __init__(
     self,
-    decisions: list[Decision | Exception],
-    verdicts: list[Verdict | Exception] | None = None,
+    decisions: Sequence[Decision | Exception],
+    verdicts: Sequence[Verdict | Exception] | None = None,
   ) -> None:
     self.decisions = deque(decisions)
     self.verdicts = deque(verdicts or [])
