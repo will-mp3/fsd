@@ -14,7 +14,7 @@ from fsd.operator.config import Settings
 from fsd.operator.context import Observation, Session
 from fsd.operator.contracts import Event, Hold, ModelResult, Reply, TypeText, VerificationResult
 from fsd.operator.control import Control
-from fsd.operator.engine import Engine
+from fsd.operator.engine import CORRECTION, Engine
 from fsd.platform.base import Capability, Frame, MissingPermission
 from fsd.platform.fake import FakePlatform
 from fsd.platform.held_input import ReleaseError
@@ -466,6 +466,34 @@ def steps(recorder: Recorder) -> list[dict[str, object]]:
   return [e.metrics for e in recorder.events if e.kind == "metrics" and e.metrics is not None]
 
 
+@pytest.mark.parametrize("phase", ["decide", "verify"])
+@pytest.mark.parametrize("feedback", ["", "- action.combo: private-feedback-marker"])
+def test_retry_correction_carries_feedback_only_to_the_retry(
+  tmp_path: Path, phase: str, feedback: str
+) -> None:
+  platform, store = desktop(tmp_path)
+  failure = InvalidDecision("schema" if feedback else "empty", feedback)
+  expected = f"{CORRECTION}\nFix these errors:\n{feedback}" if feedback else CORRECTION
+  if phase == "decide":
+    client = ScriptedClient([failure, decision(), decision("done")])
+  else:
+    client = ScriptedClient([decision("done")], [failure, verdict()])
+  recorder = Recorder()
+  session = run_engine(platform, store, client, recorder)
+
+  if phase == "decide":
+    assert client.corrections == ["", expected, ""]
+    assert client.verification_corrections == [""]
+    assert platform.actions == [("press_keys", "return")]
+  else:
+    assert client.corrections == [""]
+    assert client.verification_corrections == ["", expected]
+    assert platform.actions == []
+  assert recorder.events[-1].kind == "done"
+  assert "private-feedback-marker" not in repr(recorder.events)
+  assert "private-feedback-marker" not in repr(session.history)
+
+
 def test_approval_change_during_progress_records_discarded_action(tmp_path: Path) -> None:
   # Approval changes at the final await must block input and use the trace schema.
   platform, store = desktop(tmp_path)
@@ -594,17 +622,22 @@ def test_help_events_keep_run_identity_after_continuation(tmp_path: Path) -> Non
 def test_two_invalid_responses_record_once_before_help(tmp_path: Path, phase: str) -> None:
   # Retrying the same captured frame must not create a second trace step.
   platform, store = desktop(tmp_path)
+  failures = [
+    InvalidDecision("schema", "private-feedback-first"),
+    InvalidDecision("schema", "private-feedback-second"),
+  ]
   if phase == "decide":
-    client = ScriptedClient([InvalidDecision("empty"), InvalidDecision("schema")])
+    client = ScriptedClient(failures)
   else:
-    client = ScriptedClient(
-      [decision("done")], [InvalidDecision("empty"), InvalidDecision("schema")]
-    )
+    client = ScriptedClient([decision("done")], failures)
   recorder = Recorder([Reply(cancel=True)])
   run_engine(platform, store, client, recorder)
 
   assert platform.actions == []
   assert [e.kind for e in recorder.events[-2:]] == ["help", "cancelled"]
+  corrections = client.corrections if phase == "decide" else client.verification_corrections
+  assert corrections == ["", f"{CORRECTION}\nFix these errors:\nprivate-feedback-first"]
+  assert "private-feedback" not in repr(recorder.events)
   records = steps(recorder)
   assert len(records) == len(platform.capture_requests)
   assert records[-1].get("outcome") == "invalid"
@@ -787,11 +820,18 @@ def test_rejected_completion_continues_with_evidence(tmp_path: Path) -> None:
 
 def test_second_rejected_completion_pauses(tmp_path: Path) -> None:
   platform, store = desktop(tmp_path)
-  client = ScriptedClient([decision("done")] * 2, [verdict(False), verdict(False)])
+  evidence = "Verifier-specific selection evidence"
+  latest = verdict(False).model_copy(update={"evidence": evidence})
+  client = ScriptedClient([decision("done")] * 2, [verdict(False), latest])
   recorder = Recorder([Reply(cancel=True)])
   run_engine(platform, store, client, recorder)
   assert not any(e.kind == "done" for e in recorder.events)
-  assert any(e.kind == "help" for e in recorder.events)
+  help_events = [event for event in recorder.events if event.kind == "help"]
+  assert len(help_events) == 1
+  assert help_events[0].message.endswith(f"Verifier evidence: {evidence}")
+  assert len(client.verifications) == 2
+  assert platform.actions == []
+  assert all(evidence not in json.dumps(event.metrics) for event in recorder.events)
 
 
 def test_verifier_receives_goal_and_fresh_frame(tmp_path: Path) -> None:

@@ -35,6 +35,12 @@ EventSink = Callable[[Event], Awaitable[Reply | None]]
 CORRECTION = "Your last response was invalid. Return only a valid schema object."
 
 
+def correction_for(exc: InvalidDecision) -> str:
+  if not exc.feedback:
+    return CORRECTION
+  return f"{CORRECTION}\nFix these errors:\n{exc.feedback}"
+
+
 class RunLimit(Exception):
   pass
 
@@ -228,7 +234,8 @@ class Engine:
       last_decision = None
 
     async def ask[T](request: Callable[[str], Awaitable[T]], shot: Step) -> T | None:
-      for correction in ("", CORRECTION):
+      correction = ""
+      for attempt in range(2):
         check()
         try:
           return await controlled(
@@ -238,10 +245,11 @@ class Engine:
           )
         except InvalidDecision as exc:
           shot.trace["invalid_cause"] = exc.cause
-          if correction:
+          if attempt:
             await record(shot, "invalid")
             control.check()
             await pause("The model returned two invalid responses; no action was performed.")
+          correction = correction_for(exc)
       return None
 
     try:
@@ -346,7 +354,8 @@ class Engine:
             await record(proof, "rejected_done")
             if recovery.rejected_done():
               await pause(
-                "The task was reported complete twice, but the screen did not confirm it."
+                "The task was reported complete twice, but the screen did not confirm it.\n"
+                f"Verifier evidence: {evidence}"
               )
             continue
 

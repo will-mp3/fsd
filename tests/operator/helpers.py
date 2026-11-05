@@ -40,6 +40,8 @@ class ScriptedClient:
     self.verdicts = deque(verdicts or [])
     self.observations: list[Observation] = []
     self.verifications: list[tuple[str, Frame]] = []
+    self.corrections: list[str] = []
+    self.verification_corrections: list[str] = []
 
   async def decide(
     self,
@@ -48,6 +50,7 @@ class ScriptedClient:
     correction: str = "",
   ) -> ModelResult:
     self.observations.append(observation)
+    self.corrections.append(correction)
     control.check()
     item = self.decisions.popleft()
     if isinstance(item, Exception):
@@ -62,6 +65,7 @@ class ScriptedClient:
     correction: str = "",
   ) -> VerificationResult:
     self.verifications.append((goal, frame))
+    self.verification_corrections.append(correction)
     control.check()
     item = self.verdicts.popleft() if self.verdicts else verdict()
     if isinstance(item, Exception):
