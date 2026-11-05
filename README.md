@@ -95,6 +95,33 @@ written. Records exclude screenshots, task text, typed text, and API keys;
 they do not restore a session or establish whether a task succeeded. File
 errors stop chat with exit status `2` and a diagnostic message.
 
+Step records identify the captured screen with `run_id`, `step`, `bundle_id`,
+and frame dimensions. They include capture, encoding, and request timings;
+token usage and cost; the decision; and an `outcome`: `performed`, `refused`,
+`invalid`, `help`, `claimed_done`, `done`, `rejected_done`, `approvals_changed`,
+or `interrupted`. Unreported cached input tokens are recorded as null.
+Lifecycle status records also carry `run_id` but do not represent additional
+captured screens.
+
+### Frame archive
+
+Set `FSD_TRACE_DIR` to save each step's original captured screen as
+`<FSD_TRACE_DIR>/<run_id>/<step>.png`. The directory is created as needed;
+`run_id` and `step` match the corresponding metrics record when metrics are
+enabled. Archival also works without `FSD_METRICS_PATH`.
+
+```bash
+FSD_METRICS_PATH=./metrics.jsonl FSD_TRACE_DIR=./trace uv run fsd chat
+```
+
+Archival is off by default. Frames come from filtered capture, so unapproved
+windows are excluded, but approved windows may contain private content. If
+a frame cannot be written, chat ends with exit status `2` and a message naming
+`FSD_TRACE_DIR`.
+
+Frames are saved before their metrics records. These writes are not atomic:
+a metrics write failure can leave a saved frame without a matching record.
+
 ## Development
 
 ```bash

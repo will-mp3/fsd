@@ -11,6 +11,7 @@ from fsd.operator.config import Settings
 from fsd.operator.context import SYSTEM_PROMPT, Observation
 from fsd.operator.contracts import Decision, ModelResult, Verdict, VerificationResult
 from fsd.operator.control import Control, controlled
+from fsd.operator.wire import wire_schema
 from fsd.platform.base import Frame
 
 
@@ -134,7 +135,7 @@ def payload(
       "json_schema": {
         "name": name,
         "strict": True,
-        "schema": schema.model_json_schema(),
+        "schema": wire_schema(schema),
       },
     },
   }

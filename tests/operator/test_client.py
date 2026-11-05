@@ -100,6 +100,33 @@ def test_request_body_labels_images_and_requires_schema(
   assert schema["properties"]["kind"]["enum"] == ["act", "done", "help"]
   assert schema["$defs"]["Click"]["properties"]["x"]["minimum"] == 0
   assert schema["$defs"]["Click"]["properties"]["x"]["maximum"] == 1
+  assert '"const"' not in json.dumps(schema)
+  assert schema["$defs"]["Key"]["properties"]["kind"]["enum"] == ["key"]
+
+
+@pytest.mark.parametrize(
+  "action",
+  [
+    {"kind": "combo", "combo": "command+space"},
+    {"kind": "key", "key": "space", "duration_ms": 100},
+  ],
+)
+def test_observed_malformed_actions_remain_rejected(action: dict[str, object]) -> None:
+  from fsd.operator.client import InvalidDecision, parse
+  from fsd.operator.contracts import Decision
+
+  decision = {
+    "kind": "act",
+    "action": action,
+    "message": "Open the launcher",
+    "expected": "Launcher visible",
+    "notes": "",
+    "previous_result": "none",
+  }
+  content = json.dumps(response_body(json.dumps(decision))).encode()
+  with pytest.raises(InvalidDecision) as invalid:
+    parse(content, Decision)
+  assert invalid.value.cause == "schema"
 
 
 def test_images_schema_and_retry() -> None:
