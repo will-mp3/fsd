@@ -11,7 +11,7 @@ from fsd.operator.config import Settings
 from fsd.operator.context import SYSTEM_PROMPT, Observation
 from fsd.operator.contracts import Decision, ModelResult, Verdict, VerificationResult
 from fsd.operator.control import Control, controlled
-from fsd.operator.wire import wire_schema
+from fsd.operator.wire import validation_feedback, wire_schema
 from fsd.platform.base import Frame
 
 
@@ -23,9 +23,10 @@ InvalidCause = Literal["envelope", "finish_reason", "empty", "schema"]
 
 
 class InvalidDecision(InferenceError):
-  def __init__(self, cause: InvalidCause) -> None:
+  def __init__(self, cause: InvalidCause, feedback: str = "") -> None:
     super().__init__("Model returned an invalid or incomplete response.")
     self.cause = cause
+    self.feedback = feedback
 
 
 class DecisionClient(Protocol):
@@ -93,8 +94,8 @@ def parse[T: BaseModel](content: bytes, schema: type[T]) -> tuple[T, Usage]:
 
   try:
     parsed = schema.model_validate_json(text)
-  except ValidationError:
-    raise InvalidDecision("schema") from None
+  except ValidationError as error:
+    raise InvalidDecision("schema", validation_feedback(error, text)) from None
 
   return parsed, envelope.usage or Usage()
 

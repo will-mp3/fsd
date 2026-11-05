@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Annotated, Literal, Self
+from typing import Annotated, Literal, Self, get_args
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -78,6 +78,10 @@ class Wait(StrictModel):
 
 
 Action = Click | Scroll | TypeText | Key | Hold | Wait
+
+ACTION_MODELS: dict[str, type[BaseModel]] = {
+  get_args(model.model_fields["kind"].annotation)[0]: model for model in get_args(Action)
+}
 
 
 class Decision(StrictModel):

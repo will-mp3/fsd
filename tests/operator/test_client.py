@@ -129,6 +129,43 @@ def test_observed_malformed_actions_remain_rejected(action: dict[str, object]) -
   assert invalid.value.cause == "schema"
 
 
+def test_schema_failures_carry_feedback() -> None:
+  from fsd.operator.client import InvalidDecision, parse
+  from fsd.operator.contracts import Decision
+
+  data = json.loads(done_content())
+  data.update(
+    kind="act",
+    action={"kind": "key", "combo": "command+space"},
+    expected="Launcher visible",
+  )
+  content = json.dumps(response_body(json.dumps(data))).encode()
+  with pytest.raises(InvalidDecision) as invalid:
+    parse(content, Decision)
+  assert invalid.value.cause == "schema"
+  assert "action.combo" in invalid.value.feedback
+  assert "Use alt, cmd, ctrl, shift" in invalid.value.feedback
+  assert str(invalid.value) == "Model returned an invalid or incomplete response."
+
+
+def test_non_schema_failures_have_no_feedback() -> None:
+  from fsd.operator.client import InvalidDecision
+
+  assert InvalidDecision("envelope").feedback == ""
+  assert InvalidDecision("empty").feedback == ""
+  assert InvalidDecision("finish_reason").feedback == ""
+
+
+def test_verdict_schema_failures_carry_feedback() -> None:
+  from fsd.operator.client import InvalidDecision, parse
+  from fsd.operator.contracts import Verdict
+
+  content = json.dumps(response_body('{"complete": true, "evidence": ""}')).encode()
+  with pytest.raises(InvalidDecision) as invalid:
+    parse(content, Verdict)
+  assert "evidence" in invalid.value.feedback
+
+
 def test_images_schema_and_retry() -> None:
   from fsd.operator.client import OpenRouterClient
 
