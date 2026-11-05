@@ -4,6 +4,20 @@ import pytest
 from pydantic import ValidationError
 
 from fsd.operator.contracts import Decision
+from fsd.operator.wire import wire_schema
+from fsd.platform.base import MODIFIERS
+
+
+def test_key_combo_description_names_exact_modifiers() -> None:
+  combo = wire_schema(Decision)["$defs"]["Key"]["properties"]["combo"]
+  for modifier in MODIFIERS:
+    assert modifier in combo["description"]
+  assert "cmd+space" in combo["description"]
+
+
+def test_hold_key_description_forbids_modifiers() -> None:
+  key = wire_schema(Decision)["$defs"]["Hold"]["properties"]["key"]
+  assert "no modifiers" in key["description"]
 
 
 def test_metrics_event_carries_snapshot_bytes_for_archival() -> None:
@@ -71,6 +85,7 @@ def payload(action: dict[str, object] | None) -> str:
     {"kind": "hold", "key": "shift+a", "duration_ms": 100},
     {"kind": "hold", "key": "banana", "duration_ms": 100},
     {"kind": "key", "combo": "banana"},
+    {"kind": "key", "combo": "command+space"},
     {"kind": "wait", "duration_ms": "100"},
     {"kind": "wait", "duration_ms": True},
     {"kind": "wait", "duration_ms": 0},

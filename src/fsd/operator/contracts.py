@@ -4,10 +4,16 @@ from typing import Annotated, Literal, Self
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from fsd.operator.config import MAX_WAIT_MS
-from fsd.platform.base import MAX_HOLD_MS, SUPPORTED_KEYS, parse_combo
+from fsd.platform.base import MAX_HOLD_MS, MODIFIERS, SUPPORTED_KEYS, parse_combo
 
 Coordinate = Annotated[float, Field(ge=0, le=1, allow_inf_nan=False)]
 ShortText = Annotated[str, Field(max_length=500)]
+
+COMBO_HELP = (
+  "One key, optionally preceded by modifiers joined with '+'. "
+  f"Modifiers are exactly: {', '.join(sorted(MODIFIERS))}. "
+  "Examples: cmd+space, cmd+a, return, escape."
+)
 
 
 class StrictModel(BaseModel):
@@ -35,7 +41,7 @@ class TypeText(StrictModel):
 
 class Key(StrictModel):
   kind: Literal["key"]
-  combo: Annotated[str, Field(min_length=1, max_length=80)]
+  combo: Annotated[str, Field(min_length=1, max_length=80, description=COMBO_HELP)]
 
   @field_validator("combo")
   @classmethod
@@ -51,6 +57,7 @@ class Hold(StrictModel):
     Field(
       min_length=1,
       max_length=30,
+      description="One ordinary key with no modifiers, for example space or right.",
       json_schema_extra={"enum": sorted(SUPPORTED_KEYS)},
     ),
   ]
