@@ -7,14 +7,14 @@ and operate varied on-screen environments from pixels under per-application
 approval. The CLI checks the environment, manages persisted approvals, and runs
 an interactive agent session with `fsd chat`.
 
-Current design: [hosted vision operator](docs/the-ark/specs/2026-10-11-hosted-vision-operator-design.md).
-Implementation: [Plan 2](docs/the-ark/plans/2026-10-11-hosted-vision-operator.md).
+Current design: [hosted vision operator](docs/halo/specs/2026-10-11-hosted-vision-operator-design.md).
+Implementation: [Plan 2](docs/halo/plans/2026-10-11-hosted-vision-operator.md).
 The operator uses one hosted vision-language model through OpenRouter, selected
 in internal configuration. Tasks 1 through 6 are implemented; Task 7 covers live
 integration and model capability evaluation. OCR, detectors, and separate decision
 models are optional optimizations to evaluate after establishing the baseline.
 
-Foundation and historical architecture: [original specification](docs/the-ark/specs/2026-10-03-computer-use-harness-design.md).
+Foundation and historical architecture: [original specification](docs/halo/specs/2026-10-03-computer-use-harness-design.md).
 
 ## Requirements
 
@@ -145,7 +145,7 @@ ends with exit status `2` and a message naming `FSD_TRACE_DIR`.
 The pair is saved before its metrics record. A metrics write failure can leave a
 completed pair without a metrics row; JSON records retain their own correlation IDs.
 
-Implementation and remaining live checks: [observation and explanations design](docs/the-ark/specs/2026-11-05-observation-and-explanations-design.md).
+Implementation and remaining live checks: [observation and explanations design](docs/halo/specs/2026-11-05-observation-and-explanations-design.md).
 
 ## Development
 

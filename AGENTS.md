@@ -13,8 +13,8 @@
 
 Project specifications and implementation plans live here:
 
-- Specifications: `docs/the-ark/specs/`
-- Implementation plans: `docs/the-ark/plans/`
+- Specifications: `docs/halo/specs/`
+- Implementation plans: `docs/halo/plans/`
 
 Use the relevant documents there as the project evolves.
 
@@ -25,7 +25,7 @@ Use the relevant documents there as the project evolves.
 - Capture the full main display, including unapproved apps and actual occlusion. Every app is blocked for input until explicitly approved; ActionGate enforces input authorization.
 - All input goes through `ActionGate`, which checks ownership immediately before each action and performs it only if approved. Never call `Platform` input methods directly from above the gate.
 - Visual input is pixels, accompanied by app ownership and input-approval metadata. The accessibility tree is evaluation ground truth, never agent input.
-- For observation, app identity, and explanation recording, follow `docs/the-ark/specs/2026-11-05-observation-and-explanations-design.md`; its approved policy supersedes older filtering and identity-hiding requirements.
+- For observation, app identity, and explanation recording, follow `docs/halo/specs/2026-11-05-observation-and-explanations-design.md`; its approved policy supersedes older filtering and identity-hiding requirements.
 - `Platform` operations are synchronous; use asyncio for the network calls (inference server, Jev, planner).
 - Preserve a clean engine/CLI boundary: the loop has no terminal dependencies and the CLI consumes its events.
 
