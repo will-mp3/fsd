@@ -1,7 +1,7 @@
-"""Filtered frame capture with ScreenCaptureKit."""
+"""Full main-display capture with ScreenCaptureKit."""
 
 import threading
-from collections.abc import Callable, Collection
+from collections.abc import Callable
 from typing import Any
 
 import AppKit
@@ -39,7 +39,7 @@ def _wait_for(start: Callable[[Handler], None], what: str) -> Any:
   return outcome["result"]
 
 
-def _content_filter(content: Any, bundle_ids: Collection[str]) -> tuple[Any, int]:
+def _content_filter(content: Any) -> tuple[Any, int]:
   main_display = int(Quartz.CGMainDisplayID())
   display = next(
     (display for display in content.displays() if display.displayID() == main_display),
@@ -48,13 +48,8 @@ def _content_filter(content: Any, bundle_ids: Collection[str]) -> tuple[Any, int
   if display is None:
     raise CaptureError("The main display is not available for capture.")
 
-  wanted = set(bundle_ids)
-  applications = [app for app in content.applications() if app.bundleIdentifier() in wanted]
-
   builder = ScreenCaptureKit.SCContentFilter.alloc()
-  content_filter = builder.initWithDisplay_includingApplications_exceptingWindows_(
-    display, applications, []
-  )
+  content_filter = builder.initWithDisplay_excludingWindows_(display, [])
   if content_filter is None:
     raise CaptureError("Could not create the capture filter.")
 
@@ -81,11 +76,11 @@ def _frame_from_image(image: Any, screen_rect: Rect) -> Frame:
   )
 
 
-def capture(bundle_ids: Collection[str]) -> Frame:
+def capture() -> Frame:
   content = _wait_for(
     lambda handler: (
       ScreenCaptureKit.SCShareableContent.getShareableContentExcludingDesktopWindows_onScreenWindowsOnly_completionHandler_(  # noqa: E501
-        True, True, handler
+        False, True, handler
       )
     ),
     "Listing capturable content",
@@ -93,7 +88,7 @@ def capture(bundle_ids: Collection[str]) -> Frame:
   if content is None:
     raise CaptureError("ScreenCaptureKit returned no capturable content.")
 
-  content_filter, main_display = _content_filter(content, bundle_ids)
+  content_filter, main_display = _content_filter(content)
 
   bounds = Quartz.CGDisplayBounds(main_display)
   mode = Quartz.CGDisplayCopyDisplayMode(main_display)

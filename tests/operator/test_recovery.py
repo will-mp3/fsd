@@ -1,8 +1,9 @@
-import re
+import pytest
 
+from fsd.approval.gate import RefusalReason
 from fsd.operator.config import Settings
 from fsd.operator.frames import Thumbnail
-from fsd.operator.recovery import REFUSAL_HINTS, Recovery
+from fsd.operator.recovery import REFUSAL_HINTS, Recovery, refusal_hint
 
 A = Thumbnail((4, 1), bytes([0] * 4))
 B = Thumbnail((4, 1), bytes([255] * 4))
@@ -116,7 +117,17 @@ def test_reset_forgets_screens_when_judging_new_progress() -> None:
   assert recovery.observe(B, A).progress is True
 
 
-def test_hints_cover_every_reason_and_name_no_app() -> None:
-  # Bundle IDs are enforcement metadata, never agent input.
+def test_hints_cover_every_reason() -> None:
   assert set(REFUSAL_HINTS) == {"pointer_target", "keyboard_focus", "focus_changed"}
-  assert all(re.search(r"\w+\.\w+\.\w+", hint) is None for hint in REFUSAL_HINTS.values())
+
+
+@pytest.mark.parametrize("owner", ["com.example.target", None])
+@pytest.mark.parametrize("reason", ["pointer_target", "keyboard_focus", "focus_changed"])
+def test_refusal_hint_identifies_owner_without_mislabeling_focus_changes(
+  owner: str | None, reason: RefusalReason
+) -> None:
+  hint = refusal_hint(reason, owner)
+  assert (owner or "unidentified app") in hint
+  if reason == "focus_changed":
+    assert "not approved" not in hint
+    assert "partly entered" in hint

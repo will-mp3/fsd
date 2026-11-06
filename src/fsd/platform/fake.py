@@ -36,7 +36,7 @@ class FakePlatform:
     self.window_list = list(windows)
     self.frontmost = frontmost
     self.actions: list[tuple[object, ...]] = []
-    self.capture_requests: list[frozenset[str]] = []
+    self.capture_calls = 0
     self._frames = deque(frames)
     self._missing_permissions = list(missing_permissions)
 
@@ -49,8 +49,8 @@ class FakePlatform:
   def frontmost_app(self) -> str | None:
     return self.frontmost
 
-  def capture(self, bundle_ids: Collection[str]) -> Frame:
-    self.capture_requests.append(frozenset(bundle_ids))
+  def capture(self) -> Frame:
+    self.capture_calls += 1
     if not self._frames:
       raise CaptureError("FakePlatform has no recorded frames left to replay.")
     return self._frames.popleft()

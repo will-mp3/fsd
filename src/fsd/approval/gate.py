@@ -21,8 +21,8 @@ class GateRefused(Exception):
 class ActionGate:
   """Check current ownership before allowing input.
 
-  Filtered capture can show an approved window even when an unapproved
-  window covers it on the real desktop.
+  Ownership can change between a screenshot and execution, so the image
+  cannot authorize input to the current target.
   """
 
   def __init__(self, platform: Platform, store: ApprovalStore) -> None:

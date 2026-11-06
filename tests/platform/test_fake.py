@@ -8,19 +8,19 @@ def _frame(tag: bytes) -> Frame:
   return Frame(png=tag, width=10, height=10, screen_rect=Rect(0, 0, 10, 10))
 
 
-def test_capture_replays_frames_in_order_and_records_the_filter() -> None:
+def test_capture_replays_frames_in_order_without_an_approval_filter() -> None:
   fake = FakePlatform(frames=[_frame(b"one"), _frame(b"two")])
-  assert fake.capture({"com.example.a"}).png == b"one"
-  assert fake.capture({"com.example.a", "com.example.b"}).png == b"two"
-  assert fake.capture_requests == [
-    frozenset({"com.example.a"}),
-    frozenset({"com.example.a", "com.example.b"}),
-  ]
+  assert fake.capture_calls == 0
+  assert fake.capture().png == b"one"
+  assert fake.capture().png == b"two"
+  assert fake.capture_calls == 2
 
 
 def test_capture_fails_clearly_when_frames_run_out() -> None:
+  fake = FakePlatform()
   with pytest.raises(CaptureError, match="no recorded frames"):
-    FakePlatform().capture({"com.example.a"})
+    fake.capture()
+  assert fake.capture_calls == 1
 
 
 def test_input_is_recorded_not_performed() -> None:

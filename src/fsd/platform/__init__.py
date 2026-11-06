@@ -12,8 +12,8 @@ def require_mandatory(backend: Platform) -> Platform:
   if missing:
     names = ", ".join(sorted(capability.value for capability in missing))
     raise UnsupportedPlatformError(
-      f"This system cannot enforce per-app approval (missing: {names}). "
-      "fsd refuses to run without it."
+      f"Required platform capabilities are unavailable (missing: {names}). "
+      "fsd refuses to run without them."
     )
   return backend
 

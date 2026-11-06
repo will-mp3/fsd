@@ -21,8 +21,8 @@ def test_backend_with_all_mandatory_capabilities_is_accepted() -> None:
 @pytest.mark.parametrize(
   "present, missing_name",
   [
-    ({Capability.FILTERED_CAPTURE}, "window_owner_lookup"),
-    ({Capability.WINDOW_OWNER_LOOKUP}, "filtered_capture"),
+    ({Capability.DISPLAY_CAPTURE}, "window_owner_lookup"),
+    ({Capability.WINDOW_OWNER_LOOKUP}, "display_capture"),
   ],
 )
 def test_backend_missing_a_mandatory_capability_is_refused(

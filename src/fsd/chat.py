@@ -12,6 +12,7 @@ from typing import TextIO
 import httpx
 
 from fsd.approval.store import ApprovalStore
+from fsd.archive import save_snapshot
 from fsd.operator.client import OpenRouterClient
 from fsd.operator.config import Settings
 from fsd.operator.context import Session
@@ -156,10 +157,7 @@ def launch_chat(platform: Platform, store: ApprovalStore, out: TextIO, err: Text
         root = Path(trace_dir)
 
         def save(snapshot: Snapshot) -> None:
-          folder = root / snapshot.run_id
-          _diagnostic_io(partial(folder.mkdir, parents=True, exist_ok=True), "FSD_TRACE_DIR")
-          target = folder / f"{snapshot.step}.png"
-          _diagnostic_io(partial(target.write_bytes, snapshot.png), "FSD_TRACE_DIR")
+          _diagnostic_io(partial(save_snapshot, root, snapshot), "FSD_TRACE_DIR")
 
         archive = save
 

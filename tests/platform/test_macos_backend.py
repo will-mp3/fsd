@@ -3,7 +3,7 @@ import pytest
 Quartz = pytest.importorskip("Quartz", reason="macOS backend needs pyobjc")
 
 from fsd.platform import select_backend  # noqa: E402
-from fsd.platform.base import Platform, Rect, ScreenPoint, WindowInfo  # noqa: E402
+from fsd.platform.base import Frame, Platform, Rect, ScreenPoint, WindowInfo  # noqa: E402
 from fsd.platform.macos import windows  # noqa: E402
 
 
@@ -30,6 +30,16 @@ def test_select_backend_constructs_the_macos_implementation(backend: Platform) -
   from fsd.platform.macos.backend import MacOSPlatform
 
   assert isinstance(backend, MacOSPlatform)
+
+
+def test_capture_delegates_without_an_approval_filter(
+  backend: Platform, monkeypatch: pytest.MonkeyPatch
+) -> None:
+  from fsd.platform.macos import capture
+
+  expected = Frame(b"screen", 100, 100, Rect(0, 0, 100, 100))
+  monkeypatch.setattr(capture, "capture", lambda: expected)
+  assert backend.capture() is expected
 
 
 def test_window_owner_uses_the_frontmost_window_at_the_point(

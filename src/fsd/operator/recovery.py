@@ -10,18 +10,23 @@ from fsd.operator.frames import Thumbnail, changed
 
 RECENT_SCREENS = 6
 
-# Filtered capture hides unapproved windows.
-# Feedback must explain the refusal without exposing the identity of a hidden app.
 REFUSAL_HINTS: dict[RefusalReason, str] = {
   "pointer_target": (
-    "That point is covered by, or belongs to, a window you cannot act on. "
-    "Choose another point or bring the target forward."
+    "Input at that point is not approved. Choose a point owned by an approved app "
+    "or bring the approved target forward."
   ),
   "keyboard_focus": (
-    "Keyboard focus is on a window you cannot see or use. Click inside the target window first."
+    "Keyboard input is not approved for the focused app. "
+    "Click inside an approved target window first."
   ),
   "focus_changed": ("Focus moved during input. Text may be partly entered; check before retrying."),
 }
+
+
+def refusal_hint(reason: RefusalReason, owner: str | None) -> str:
+  target = owner if owner is not None else "unidentified app"
+  return f"Current input owner: {target}. {REFUSAL_HINTS[reason]}"
+
 
 STUCK_FEEDBACK = "Your recent actions produced no visible progress. Try a different approach."
 

@@ -43,7 +43,7 @@ Approve or block an app by its exact bundle identifier or a unique display name
 uv run fsd apps approve com.apple.TextEdit
 ```
 
-Every app, including system surfaces, is blocked until explicitly approved.
+Every app, including system surfaces, is blocked for input until explicitly approved.
 Approvals are stored in `~/.config/fsd/approvals.json` by default. Set
 `FSD_CONFIG_DIR` to override the directory, or `XDG_CONFIG_HOME` to use
 `$XDG_CONFIG_HOME/fsd/approvals.json`. `FSD_CONFIG_DIR` takes precedence.
@@ -79,9 +79,12 @@ Use `/exit` or EOF at a goal or help prompt to end the session; exiting from a
 help prompt also cancels the current task.
 
 Task context lasts for the current process only. Closing fsd does not save a
-resumable session. Captured images sent to the configured hosted model contain
-approved applications only. Model performance and completion reliability still
-need live evaluation on your tasks.
+resumable session. Captured images sent to the configured hosted model show the
+full main display, including unapproved apps and actual window occlusion. The
+agent also receives the foreground app's bundle ID and input-approved bundle IDs.
+Visibility does not grant input permission: ActionGate checks the live owner before
+input, including during checked typing and key holds. Model performance and
+completion reliability still need live evaluation on your tasks.
 
 To append timings, action types, lifecycle statuses, model-reported action
 outcomes, and token/cost metrics to a JSONL file:
@@ -103,10 +106,11 @@ or `interrupted`. Unreported cached input tokens are recorded as null.
 Lifecycle status records also carry `run_id` but do not represent additional
 captured screens.
 
-### Frame archive
+### Frames and explanation archive
 
 Set `FSD_TRACE_DIR` to save each step's original captured screen as
-`<FSD_TRACE_DIR>/<run_id>/<step>.png`. The directory is created as needed;
+`<FSD_TRACE_DIR>/<run_id>/<step>.png` and its explanation record as
+`<FSD_TRACE_DIR>/<run_id>/<step>.json`. The directory is created as needed;
 `run_id` and `step` match the corresponding metrics record when metrics are
 enabled. Archival also works without `FSD_METRICS_PATH`.
 
@@ -114,13 +118,34 @@ enabled. Archival also works without `FSD_METRICS_PATH`.
 FSD_METRICS_PATH=./metrics.jsonl FSD_TRACE_DIR=./trace uv run fsd chat
 ```
 
-Archival is off by default. Frames come from filtered capture, so unapproved
-windows are excluded, but approved windows may contain private content. If
-a frame cannot be written, chat ends with exit status `2` and a message naming
-`FSD_TRACE_DIR`.
+Archival is off by default. Frames include unapproved windows. JSON records retain
+task context, app identity and approvals, model messages/notes/expected results,
+full action arguments (including typed text), each inference attempt and its sent
+correction, validation feedback, successful or rejected verifier evidence, refusals,
+and interruptions. These artifacts can contain sensitive screen and task content.
+Transport headers, API configuration, raw HTTP bodies, and arbitrary exception
+messages are not serialized. This is not a general content-redaction feature.
 
-Frames are saved before their metrics records. These writes are not atomic:
-a metrics write failure can leave a saved frame without a matching record.
+The JSON format uses `schema_version: 1`. `run_id` and `step` identify the frame;
+`frame` includes its filename and coordinate mapping, and `previous_frame_step`
+links an earlier actor image when one was sent. `attempts` contains ordered logical
+decision/verification requests, each with a status, the exact correction sent, and
+a validated `response` or invalid-response feedback. Unfinished attempts have no
+response. `execution_status`, `refusal`, `feedback`, `warning`, `pause`, and
+`interruption` describe the resulting control flow. A request that the client retries
+internally after a transient HTTP error remains one logical attempt.
+
+Each file is written through a temporary file and atomically replaced. The PNG is
+published first, and the JSON last; the JSON marks a completed pair. A failure can
+leave an orphan PNG, which is not a completed step. Completed identities are never
+overwritten. Graceful cancellation records captured work; a forced process kill or
+power loss may prevent finalization. If either artifact cannot be written, chat
+ends with exit status `2` and a message naming `FSD_TRACE_DIR`.
+
+The pair is saved before its metrics record. A metrics write failure can leave a
+completed pair without a metrics row; JSON records retain their own correlation IDs.
+
+Implementation and remaining live checks: [observation and explanations design](docs/the-ark/specs/2026-11-05-observation-and-explanations-design.md).
 
 ## Development
 

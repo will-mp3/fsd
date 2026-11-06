@@ -37,7 +37,7 @@ def test_capture_returns_a_png_at_display_pixel_size(live_platform: Platform) ->
   assert mode is not None
   bounds = Quartz.CGDisplayBounds(display)
 
-  frame = live_platform.capture({FINDER})
+  frame = live_platform.capture()
 
   assert frame.png[:8] == b"\x89PNG\r\n\x1a\n"
   assert struct.unpack(">II", frame.png[16:24]) == (frame.width, frame.height)
@@ -51,32 +51,6 @@ def test_capture_returns_a_png_at_display_pixel_size(live_platform: Platform) ->
     float(bounds.size.width),
     float(bounds.size.height),
   )
-
-
-def test_empty_approval_capture_is_opaque_black(live_platform: Platform) -> None:
-  frame = live_platform.capture(set())
-  bitmap = AppKit.NSBitmapImageRep.imageRepWithData_(frame.png)
-  assert bitmap is not None
-  assert bitmap.bitsPerSample() == 8
-  assert not bitmap.isPlanar()
-  samples = int(bitmap.samplesPerPixel())
-  assert samples in (1, 2, 3, 4)
-
-  pixel = bytearray(samples)
-  if bitmap.hasAlpha():
-    alpha_first = bool(bitmap.bitmapFormat() & AppKit.NSAlphaFirstBitmapFormat)
-    pixel[0 if alpha_first else -1] = 255
-
-  width = int(bitmap.pixelsWide())
-  height = int(bitmap.pixelsHigh())
-  stride = int(bitmap.bytesPerRow())
-  raw = memoryview(bitmap.bitmapData()).cast("B")
-  assert len(raw) >= stride * height
-  expected_row = bytes(pixel) * width
-  for row in range(height):
-    start = row * stride
-    if raw[start : start + width * samples] != expected_row:
-      pytest.fail(f"Empty-approval capture has nonblack or nonopaque pixels in row {row}.")
 
 
 def test_frontmost_app_tracks_a_real_app_switch(live_platform: Platform) -> None:

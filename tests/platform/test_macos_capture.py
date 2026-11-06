@@ -89,10 +89,10 @@ def capture_selection(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
   )
 
   class FilterBuilder:
-    def initWithDisplay_includingApplications_exceptingWindows_(
-      self, display: object, applications: list[Any], exceptions: list[Any]
+    def initWithDisplay_excludingWindows_(
+      self, display: object, exclusions: list[Any]
     ) -> object | None:
-      state.calls.append((display, applications, exceptions))
+      state.calls.append((display, exclusions))
       result: object | None = state.result
       return result
 
@@ -105,33 +105,27 @@ def capture_selection(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
   return state
 
 
-def test_content_filter_selects_main_display_and_only_approved_apps(
+def test_content_filter_selects_main_display_without_window_exclusions(
   capture_module: ModuleType, capture_selection: SimpleNamespace
 ) -> None:
   state = capture_selection
 
-  content_filter, display_id = capture_module._content_filter(
-    state.content, {"com.example.approved"}
-  )
+  content_filter, display_id = capture_module._content_filter(state.content)
 
   assert content_filter is state.result
   assert display_id == 42
-  assert state.calls == [(state.main, [state.approved], [])]
+  assert state.calls == [(state.main, [])]
 
 
-@pytest.mark.parametrize(
-  "approved_ids",
-  [set(), {"com.example.not-running"}, {"unidentified:Window Server"}],
-  ids=["none-approved", "approved-app-absent", "unidentified-owner"],
-)
-def test_content_filter_does_not_broaden_an_empty_application_selection(
-  capture_module: ModuleType, capture_selection: SimpleNamespace, approved_ids: set[str]
+@pytest.mark.parametrize("apps_present", [False, True])
+def test_content_filter_does_not_depend_on_available_applications(
+  capture_module: ModuleType, capture_selection: SimpleNamespace, apps_present: bool
 ) -> None:
   state = capture_selection
-
-  capture_module._content_filter(state.content, approved_ids)
-
-  assert state.calls == [(state.main, [], [])]
+  if not apps_present:
+    state.applications = []
+  capture_module._content_filter(state.content)
+  assert state.calls == [(state.main, [])]
 
 
 def test_content_filter_refuses_to_substitute_another_display(
@@ -141,7 +135,7 @@ def test_content_filter_refuses_to_substitute_another_display(
   state.displays = [state.displays[0]]
 
   with pytest.raises(CaptureError, match="main display is not available"):
-    capture_module._content_filter(state.content, {"com.example.approved"})
+    capture_module._content_filter(state.content)
 
   assert state.calls == []
 
@@ -153,7 +147,7 @@ def test_content_filter_reports_native_initialization_failure(
   state.result = None
 
   with pytest.raises(CaptureError, match="Could not create the capture filter"):
-    capture_module._content_filter(state.content, {"com.example.approved"})
+    capture_module._content_filter(state.content)
 
 
 @pytest.fixture
@@ -278,17 +272,15 @@ def capture_runtime(
   return state
 
 
-@pytest.mark.parametrize("approved_ids", [{"com.example.approved"}, set()])
-def test_capture_uses_approval_filter_and_returns_frame_at_display_pixel_size(
-  capture_module: ModuleType, capture_runtime: SimpleNamespace, approved_ids: set[str]
+def test_capture_uses_full_display_and_returns_frame_at_display_pixel_size(
+  capture_module: ModuleType, capture_runtime: SimpleNamespace
 ) -> None:
   state = capture_runtime
 
-  frame = capture_module.capture(approved_ids)
+  frame = capture_module.capture()
 
-  expected_apps = [state.approved] if approved_ids else []
-  assert state.content_queries == [(True, True)]
-  assert state.calls == [(state.main, expected_apps, [])]
+  assert state.content_queries == [(False, True)]
+  assert state.calls == [(state.main, [])]
   assert len(state.screenshots) == 1
   content_filter, configuration = state.screenshots[0]
   assert content_filter is state.result
@@ -323,7 +315,7 @@ def test_capture_reports_missing_native_results(
   setattr(capture_runtime, field, None)
 
   with pytest.raises(CaptureError, match=message):
-    capture_module.capture({"com.example.approved"})
+    capture_module.capture()
 
   assert len(capture_runtime.screenshots) == screenshot_count
 
@@ -338,7 +330,7 @@ def test_capture_reports_configuration_failure_before_requesting_a_screenshot(
   )
 
   with pytest.raises(CaptureError, match="Could not create the capture configuration"):
-    capture_module.capture({"com.example.approved"})
+    capture_module.capture()
 
   assert capture_runtime.screenshots == []
 
@@ -360,6 +352,6 @@ def test_capture_propagates_errors_from_both_native_callbacks(
   setattr(capture_runtime, field, error)
 
   with pytest.raises(CaptureError, match=f"{operation} failed: Permission denied"):
-    capture_module.capture({"com.example.approved"})
+    capture_module.capture()
 
   assert len(capture_runtime.screenshots) == screenshot_count

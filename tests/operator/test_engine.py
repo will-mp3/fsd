@@ -1,6 +1,6 @@
 import asyncio
 import json
-from collections.abc import Callable, Collection
+from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
@@ -39,7 +39,7 @@ def test_done_records_completion_without_input(tmp_path: Path) -> None:
       "Check whether the goal is complete", session, Control(), recorder
     )
   )
-  assert platform.capture_requests == [frozenset({"app"})] * 2
+  assert platform.capture_calls == 2
   assert len(client.verifications) == 1
   assert platform.actions == []
   assert recorder.events[-1].kind == "done"
@@ -58,7 +58,7 @@ def test_help_then_done_uses_fresh_observation_and_guidance(tmp_path: Path) -> N
     )
   )
   assert platform.actions == []
-  assert platform.capture_requests == [frozenset({"app"})] * 3
+  assert platform.capture_calls == 3
   assert len(client.observations) == 2
   assert client.observations[1].current.png != client.observations[0].current.png
   assert client.observations[1].previous is None
@@ -80,8 +80,7 @@ def test_multiple_actions_do_not_require_confirmation(tmp_path: Path) -> None:
     )
   )
   assert platform.actions == [("press_keys", "return"), ("press_keys", "space")]
-  assert len(platform.capture_requests) == 4
-  assert all(request == frozenset({"app"}) for request in platform.capture_requests)
+  assert platform.capture_calls == 4
   assert not any(e.kind == "help" for e in recorder.events)
   assert recorder.events[-1].kind == "done"
 
@@ -151,7 +150,7 @@ def test_missing_permission_fails_before_capture(tmp_path: Path) -> None:
   asyncio.run(
     Engine(platform, store, client, settings).run("Act", Session(settings), Control(), recorder)
   )
-  assert platform.capture_requests == []
+  assert platform.capture_calls == 0
   assert platform.actions == []
   assert client.observations == []
   assert recorder.events[-1].kind == "failed"
@@ -162,7 +161,7 @@ def test_missing_permission_fails_before_capture(tmp_path: Path) -> None:
   "capabilities",
   [
     frozenset(),
-    frozenset({Capability.FILTERED_CAPTURE}),
+    frozenset({Capability.DISPLAY_CAPTURE}),
     frozenset({Capability.WINDOW_OWNER_LOOKUP}),
   ],
 )
@@ -177,7 +176,7 @@ def test_missing_capability_fails_before_capture(
   asyncio.run(
     Engine(platform, store, client, settings).run("Act", Session(settings), Control(), recorder)
   )
-  assert platform.capture_requests == []
+  assert platform.capture_calls == 0
   assert platform.actions == []
   assert client.observations == []
   assert recorder.events[-1].kind == "failed"
@@ -310,10 +309,10 @@ def test_metrics_distinguish_capture_inference_and_action_time(
   original_capture = platform.capture
   original_press_keys = platform.press_keys
 
-  def capture(bundle_ids: Collection[str]) -> Frame:
+  def capture() -> Frame:
     nonlocal now
     now += 2.0
-    return original_capture(bundle_ids)
+    return original_capture()
 
   def press_keys(combo: str) -> None:
     nonlocal now
@@ -468,7 +467,7 @@ def steps(recorder: Recorder) -> list[dict[str, object]]:
 
 @pytest.mark.parametrize("phase", ["decide", "verify"])
 @pytest.mark.parametrize("feedback", ["", "- action.combo: private-feedback-marker"])
-def test_retry_correction_carries_feedback_only_to_the_retry(
+def test_retry_correction_is_archived_but_excluded_from_metrics(
   tmp_path: Path, phase: str, feedback: str
 ) -> None:
   platform, store = desktop(tmp_path)
@@ -490,7 +489,7 @@ def test_retry_correction_carries_feedback_only_to_the_retry(
     assert client.verification_corrections == ["", expected]
     assert platform.actions == []
   assert recorder.events[-1].kind == "done"
-  assert "private-feedback-marker" not in repr(recorder.events)
+  assert "private-feedback-marker" not in repr([event.metrics for event in recorder.events])
   assert "private-feedback-marker" not in repr(session.history)
 
 
@@ -511,7 +510,7 @@ def test_approval_change_during_progress_records_discarded_action(tmp_path: Path
   )
 
   assert platform.actions == []
-  assert platform.capture_requests == [frozenset({"app"}), frozenset(), frozenset()]
+  assert platform.capture_calls == 3
   assert [record.get("outcome") for record in steps(recorder)] == [
     "approvals_changed",
     "claimed_done",
@@ -570,7 +569,7 @@ def test_cancellation_during_completion_trace_prevents_done(tmp_path: Path, outc
   assert not any(event.kind == "done" for event in recorder.events)
   assert not any(entry["status"] == "completed" for entry in session.history)
   assert len(client.verifications) == (0 if outcome == "claimed_done" else 1)
-  assert len(steps(recorder)) == len(platform.capture_requests)
+  assert len(steps(recorder)) == platform.capture_calls
 
 
 def test_approval_change_during_verification_discards_verdict(tmp_path: Path) -> None:
@@ -591,7 +590,7 @@ def test_approval_change_during_verification_discards_verdict(tmp_path: Path) ->
   run_engine(platform, store, client, recorder)
 
   assert len(client.verifications) == 2
-  assert platform.capture_requests == [frozenset({"app"})] * 2 + [frozenset()] * 2
+  assert platform.capture_calls == 4
   assert [record.get("outcome") for record in steps(recorder)] == [
     "claimed_done",
     "approvals_changed",
@@ -637,9 +636,9 @@ def test_two_invalid_responses_record_once_before_help(tmp_path: Path, phase: st
   assert [e.kind for e in recorder.events[-2:]] == ["help", "cancelled"]
   corrections = client.corrections if phase == "decide" else client.verification_corrections
   assert corrections == ["", f"{CORRECTION}\nFix these errors:\nprivate-feedback-first"]
-  assert "private-feedback" not in repr(recorder.events)
+  assert "private-feedback" not in repr([event.metrics for event in recorder.events])
   records = steps(recorder)
-  assert len(records) == len(platform.capture_requests)
+  assert len(records) == platform.capture_calls
   assert records[-1].get("outcome") == "invalid"
   assert records[-1].get("invalid_cause") == "schema"
   snapshots = [e.snapshot for e in recorder.events if e.snapshot is not None]
@@ -693,7 +692,7 @@ def test_interrupted_capture_is_traced_before_terminal_event(
     )
   )
 
-  assert len(platform.capture_requests) == 1
+  assert platform.capture_calls == 1
   assert platform.actions == []
   assert recorder.events[-1].kind == terminal
   records = steps(recorder)
@@ -720,23 +719,47 @@ def test_single_refusal_returns_hint_without_pausing(tmp_path: Path) -> None:
   assert recorder.events[-1].kind == "done"
   assert len(client.observations) == 2
   second = json.loads(client.observations[1].text)
-  assert "Keyboard focus is on a window you cannot see" in second["feedback"]
+  assert "com.example.hidden" in second["feedback"]
+  assert "Click inside" in second["feedback"]
   assert steps(recorder)[0]["outcome"] == "refused"
   assert steps(recorder)[0]["refusal"] == "keyboard_focus"
 
 
-def test_agent_context_never_names_the_refusing_app(tmp_path: Path) -> None:
-  # Bundle IDs are enforcement metadata; only the owner sees them, even after
-  # the owner continues from the pause.
+def test_agent_context_names_the_refusing_app_and_input_approvals(tmp_path: Path) -> None:
   platform, store = desktop(tmp_path)
   platform.frontmost = "com.example.hidden"
   client = ScriptedClient([decision()] * 3 + [decision("done")])
   recorder = Recorder([Reply(text="Try again"), Reply(cancel=True)])
   run_engine(platform, store, client, recorder)
   assert len(client.observations) == 4
-  assert all("com.example.hidden" not in o.text for o in client.observations)
+  assert all("com.example.hidden" in o.text for o in client.observations)
+  assert all(json.loads(o.text)["input_approved_apps"] == ["app"] for o in client.observations)
   help_event = next(e for e in recorder.events if e.kind == "help")
   assert "com.example.hidden" in help_event.message
+
+
+def test_refusal_feedback_survives_simultaneous_stuck_warning(tmp_path: Path) -> None:
+  platform, store = still_desktop(tmp_path, [200] * 4)
+  platform.frontmost = "blocked.app"
+  client = ScriptedClient([decision(), decision(), decision("done")])
+  recorder = Recorder()
+  run_engine(platform, store, client, recorder)
+  third = json.loads(client.observations[2].text)
+  assert "Click inside" in third["feedback"]
+  assert "blocked.app" in third["feedback"]
+  assert "no visible progress" in third["warning"]
+  assert platform.actions == []
+
+
+def test_empty_approvals_still_allow_observation(tmp_path: Path) -> None:
+  platform, store = desktop(tmp_path)
+  store.block("app")
+  client = ScriptedClient([decision("help")])
+  recorder = Recorder([Reply(cancel=True)])
+  run_engine(platform, store, client, recorder)
+  assert platform.capture_calls == 1
+  assert platform.actions == []
+  assert json.loads(client.observations[0].text)["input_approved_apps"] == []
 
 
 def test_third_consecutive_refusal_pauses(tmp_path: Path) -> None:

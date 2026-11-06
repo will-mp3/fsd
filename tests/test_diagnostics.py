@@ -38,6 +38,7 @@ def run_chat(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Callable[[], tu
     return httpx.Response(
       200,
       json={
+        "transport_debug": "private-response-metadata",
         "choices": [{"finish_reason": "stop", "message": {"content": next(contents)}}],
         "usage": {"prompt_tokens": 10, "completion_tokens": 5, "cost": 0.0001},
       },
@@ -197,12 +198,31 @@ def test_trace_dir_archives_one_frame_per_step(
   assert run_chat() == (0, "")
   assert trace.is_dir()
   (run,) = trace.iterdir()
-  assert sorted(p.name for p in run.iterdir()) == ["0.png", "1.png", "2.png"]
+  assert sorted(p.name for p in run.iterdir()) == [
+    "0.json",
+    "0.png",
+    "1.json",
+    "1.png",
+    "2.json",
+    "2.png",
+  ]
   assert [(run / name).read_bytes() for name in ("0.png", "1.png", "2.png")] == [
     b"frame-0",
     b"frame-1",
     b"frame-2",
   ]
+  records = [json.loads((run / f"{step}.json").read_text()) for step in range(3)]
+  assert [(row["run_id"], row["step"]) for row in records] == [(run.name, n) for n in range(3)]
+  selected = records[0]["attempts"][0]["response"]
+  assert selected["action"] == {"kind": "type", "text": "private-typed-text"}
+  assert selected["message"] == "private-message"
+  assert selected["expected"] == "private-expected"
+  assert selected["notes"] == "private-notes"
+  assert records[2]["attempts"][0]["response"]["evidence"] == "private-evidence"
+  serialized = json.dumps(records)
+  assert "private-api-key" not in serialized
+  assert "private-response-metadata" not in serialized
+  assert "Authorization" not in serialized
   if metrics_enabled:
     rows = [json.loads(line) for line in metrics.read_text(encoding="utf-8").splitlines()]
     steps = [row for row in rows if "step" in row]
@@ -218,6 +238,7 @@ def test_no_trace_dir_writes_no_frames(
 ) -> None:
   assert run_chat() == (0, "")
   assert list(tmp_path.rglob("*.png")) == []
+  assert list(tmp_path.rglob("0.json")) == []
 
 
 def test_unwritable_trace_dir_names_the_setting(
@@ -232,3 +253,29 @@ def test_unwritable_trace_dir_names_the_setting(
   assert status == 2
   assert "FSD_TRACE_DIR" in err
   assert "FSD_METRICS_PATH" not in err
+
+
+def test_sidecar_failure_stops_chat_once_without_exposing_exception_details(
+  tmp_path: Path,
+  monkeypatch: pytest.MonkeyPatch,
+  run_chat: Callable[[], tuple[int, str]],
+) -> None:
+  from fsd import archive
+
+  trace = tmp_path / "trace"
+  monkeypatch.setenv("FSD_TRACE_DIR", str(trace))
+  replace = archive.os.replace
+
+  def fail_json(source: str | Path, target: str | Path) -> None:
+    if Path(target).suffix == ".json":
+      raise OSError("private-filesystem-details")
+    replace(source, target)
+
+  monkeypatch.setattr(archive.os, "replace", fail_json)
+  status, err = run_chat()
+  assert status == 2
+  assert err.count("FSD_TRACE_DIR") == 1
+  assert "private-" not in err
+  assert len(list(trace.rglob("*.png"))) == 1
+  assert list(trace.rglob("*.json")) == []
+  assert list(trace.rglob("*.tmp")) == []

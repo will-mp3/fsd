@@ -114,7 +114,7 @@ def test_doctor_reports_capabilities_and_success_to_supplied_stream(
   out = io.StringIO()
   code = cli._doctor(FakePlatform(), out)
   assert code == 0
-  assert "Capabilities: filtered_capture, window_owner_lookup" in out.getvalue()
+  assert "Capabilities: display_capture, window_owner_lookup" in out.getvalue()
   assert "All required permissions are granted." in out.getvalue()
   captured = capsys.readouterr()
   assert captured.out == ""
@@ -270,7 +270,7 @@ def test_chat_needs_no_model_argument(
   assert code == 0
   assert "enter a goal" in out.getvalue()
   assert err.getvalue() == ""
-  assert platform.capture_requests == []
+  assert platform.capture_calls == 0
   assert platform.actions == []
   captured = capsys.readouterr()
   assert captured.out == ""
@@ -291,7 +291,7 @@ def test_chat_reports_missing_credentials_through_cli(
   assert "OPENROUTER_API_KEY" in err.getvalue()
   assert "Traceback" not in err.getvalue()
   assert out.getvalue() == ""
-  assert platform.capture_requests == []
+  assert platform.capture_calls == 0
   assert platform.actions == []
 
 

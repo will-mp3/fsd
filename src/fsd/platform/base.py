@@ -2,20 +2,20 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Collection, Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from enum import Enum
 from typing import Protocol
 
 
 class Capability(Enum):
-  FILTERED_CAPTURE = "filtered_capture"
+  DISPLAY_CAPTURE = "display_capture"
   WINDOW_OWNER_LOOKUP = "window_owner_lookup"
   OCR = "ocr"
 
 
-# Without these two, per-app approval cannot be enforced
-MANDATORY_CAPABILITIES = frozenset({Capability.FILTERED_CAPTURE, Capability.WINDOW_OWNER_LOOKUP})
+# Observation and live input ownership are both required.
+MANDATORY_CAPABILITIES = frozenset({Capability.DISPLAY_CAPTURE, Capability.WINDOW_OWNER_LOOKUP})
 
 MODIFIERS = frozenset({"cmd", "shift", "alt", "ctrl"})
 
@@ -172,7 +172,7 @@ class Platform(Protocol):
 
   def frontmost_app(self) -> str | None: ...
 
-  def capture(self, bundle_ids: Collection[str]) -> Frame: ...
+  def capture(self) -> Frame: ...
 
   def windows(self) -> list[WindowInfo]: ...
 

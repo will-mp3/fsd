@@ -20,14 +20,14 @@ from fsd.operator.contracts import (
   ModelResult,
   Reply,
   Scroll,
-  Snapshot,
   TypeText,
   VerificationResult,
   Wait,
 )
 from fsd.operator.control import Control, RunCancelled, controlled
 from fsd.operator.frames import Thumbnail, thumbnail
-from fsd.operator.recovery import REFUSAL_HINTS, STUCK_FEEDBACK, Recovery
+from fsd.operator.records import Purpose, StepRecord
+from fsd.operator.recovery import STUCK_FEEDBACK, Recovery, refusal_hint
 from fsd.platform.base import MANDATORY_CAPABILITIES, Frame, Platform, PlatformError
 from fsd.platform.held_input import ReleaseError
 
@@ -53,6 +53,7 @@ class Step:
   frame: Frame
   started: float
   trace: dict[str, object]
+  record: StepRecord
 
 
 def usage_metrics(result: ModelResult | VerificationResult) -> dict[str, object]:
@@ -144,6 +145,7 @@ class Engine:
     recovery = Recovery(self.settings)
     acted_on: Thumbnail | None = None
     last_decision: Decision | None = None
+    last_observed_step: int | None = None
 
     def check() -> None:
       control.check()
@@ -160,7 +162,7 @@ class Engine:
       self.store.refresh()
       approved = self.store.approved()
       started = time.monotonic()
-      frame = self.platform.capture(approved)
+      frame = self.platform.capture()
       capture_seconds = time.monotonic() - started
 
       trace: dict[str, object] = {
@@ -171,9 +173,10 @@ class Engine:
         "frame_bytes": len(frame.png),
         "capture_seconds": capture_seconds,
       }
-      shot = Step(approved, frame, started, trace)
+      shot = Step(approved, frame, started, trace, StepRecord(run_id, step, frame, approved))
       pending = shot
-      trace["bundle_id"] = self.platform.frontmost_app()
+      shot.record.foreground_app = self.platform.frontmost_app()
+      trace["bundle_id"] = shot.record.foreground_app
       return shot
 
     async def record(shot: Step, outcome: str) -> None:
@@ -186,7 +189,7 @@ class Engine:
         "metrics",
         "Step recorded",
         metrics=dict(shot.trace),
-        snapshot=Snapshot(run_id, step, shot.frame.png),
+        snapshot=shot.record.snapshot(outcome, session.feedback, session.warning),
       )
 
       # Delivery may fail after the sink has already consumed the event.
@@ -194,8 +197,9 @@ class Engine:
       step += 1
       await emit(event)
 
-    async def record_interruption() -> None:
+    async def record_interruption(exc: BaseException) -> None:
       if pending is not None:
+        pending.record.interruption = type(exc).__name__
         await record(pending, "interrupted")
 
     async def pause(message: str, *, limit: bool = False, note: str | None = None) -> None:
@@ -203,7 +207,6 @@ class Engine:
       control.check()
       started = time.monotonic()
 
-      # Owner-facing messages may name apps that the agent cannot see
       session.notice(message if note is None else note)
 
       while True:
@@ -233,30 +236,49 @@ class Engine:
       acted_on = None
       last_decision = None
 
-    async def ask[T](request: Callable[[str], Awaitable[T]], shot: Step) -> T | None:
+    async def ask[T: (ModelResult, VerificationResult)](
+      request: Callable[[str], Awaitable[T]], shot: Step, purpose: Purpose
+    ) -> T | None:
       correction = ""
       for attempt in range(2):
         check()
+        detail = shot.record.attempt(purpose, correction)
         try:
-          return await controlled(
+          result = await controlled(
             request(correction),
             control,
             max(0, deadline - time.monotonic()),
           )
+          detail.complete(result.decision if isinstance(result, ModelResult) else result.verdict)
+          return result
         except InvalidDecision as exc:
+          detail.status = "invalid"
+          detail.invalid_cause = exc.cause
+          detail.feedback = exc.feedback
           shot.trace["invalid_cause"] = exc.cause
           if attempt:
+            message = "The model returned two invalid responses; no action was performed."
+            session.notice(message)
+            shot.record.pause = message
             await record(shot, "invalid")
             control.check()
-            await pause("The model returned two invalid responses; no action was performed.")
+            await pause(message)
           correction = correction_for(exc)
+        except (RunCancelled, TimeoutError, asyncio.CancelledError) as exc:
+          detail.status = "interrupted"
+          detail.error_type = type(exc).__name__
+          raise
+        except Exception as exc:
+          detail.status = "error"
+          detail.error_type = type(exc).__name__
+          raise
       return None
 
     try:
       control.check()
       session.begin(goal)
       if not self.platform.capabilities >= MANDATORY_CAPABILITIES:
-        raise PlatformError("Required filtered capture or window ownership is unavailable.")
+        raise PlatformError("Required main-display capture or window ownership is unavailable.")
       missing = self.platform.check_permissions()
       if missing:
         raise PlatformError(
@@ -282,14 +304,20 @@ class Engine:
             if last_decision is not None:
               session.strategy_failed(last_decision)
             if seen.escalation == "escalate":
+              message = "Repeated attempts are not making progress. Guidance is needed."
+              session.notice(message)
+              shot.record.pause = message
               await record(shot, "help")
-              await pause("Repeated attempts are not making progress. Guidance is needed.")
+              await pause(message)
               continue
-            session.notice(STUCK_FEEDBACK)
+            session.warn(STUCK_FEEDBACK)
 
-          observation = session.observe(shot.frame, shot.approved)
+          observation = session.observe(shot.frame, shot.approved, shot.record.foreground_app)
+          shot.record.observation = observation.text
+          shot.record.previous_frame_step = last_observed_step if observation.previous else None
+          last_observed_step = shot.record.step
           shot.trace["images_sent"] = 1 if observation.previous is None else 2
-          result = await ask(partial(self.client.decide, observation, control), shot)
+          result = await ask(partial(self.client.decide, observation, control), shot, "decision")
           if result is None:
             continue
 
@@ -313,6 +341,8 @@ class Engine:
 
           if decision.kind == "help":
             session.notes = decision.notes
+            session.notice(decision.message)
+            shot.record.pause = decision.message
             await record(shot, "help")
             await pause(decision.message)
             continue
@@ -329,7 +359,10 @@ class Engine:
             proof = capture()
             proof.trace["images_sent"] = 1
             proof.trace["decision"] = "verify"
-            verification = await ask(partial(self.client.verify, goal, proof.frame, control), proof)
+            proof.record.goal = goal
+            verification = await ask(
+              partial(self.client.verify, goal, proof.frame, control), proof, "verification"
+            )
             if verification is None:
               continue
 
@@ -351,19 +384,25 @@ class Engine:
             evidence = verification.verdict.evidence
             session.record(decision, "completion rejected: " + evidence)
             session.notice("Completion was not confirmed: " + evidence)
-            await record(proof, "rejected_done")
-            if recovery.rejected_done():
-              await pause(
+            rejected_limit = recovery.rejected_done()
+            if rejected_limit:
+              proof.record.pause = (
                 "The task was reported complete twice, but the screen did not confirm it.\n"
                 f"Verifier evidence: {evidence}"
               )
+            await record(proof, "rejected_done")
+            if proof.record.pause is not None:
+              await pause(proof.record.pause)
             continue
 
           action = decision.action
           assert action is not None
           if failures >= self.settings.recovery_limit:
+            message = "Repeated attempts are not making progress. Guidance is needed."
+            session.notice(message)
+            shot.record.pause = message
             await record(shot, "help")
-            await pause("Repeated attempts are not making progress. Guidance is needed.")
+            await pause(message)
             continue
 
           await emit(Event("progress", decision.message))
@@ -382,32 +421,41 @@ class Engine:
           try:
             await self._execute(action, shot.frame, check, control)
           except ReleaseError:
+            shot.record.execution_status = "release failed; input state uncertain"
             session.record(decision, "release failed; input state uncertain")
             raise
           except (GateRefused, ValueError) as exc:
             if isinstance(exc, GateRefused):
-              hint = REFUSAL_HINTS[exc.reason]
+              hint = refusal_hint(exc.reason, exc.owner)
               shot.trace["refusal"] = exc.reason
+              shot.record.refusal = {"reason": exc.reason, "owner": exc.owner}
             else:
               hint = str(exc)
               shot.trace["refusal"] = "limit"
+              shot.record.refusal = {"reason": "limit", "owner": None}
 
+            shot.record.execution_status = "refused: " + hint
             session.record(decision, "refused: " + hint)
             session.notice(hint)
+            refused_limit = recovery.refused()
+            if refused_limit:
+              shot.record.pause = f"Actions keep being refused. Last refusal: {hint}"
             await record(shot, "refused")
-            if recovery.refused():
+            if shot.record.pause is not None:
               await pause(
-                f"Actions keep being refused. Last refusal: {exc}",
+                shot.record.pause,
                 note="Repeated refusals; the owner was asked for help. " + hint,
               )
             continue
           except (RunCancelled, RunLimit, PlatformError, RuntimeError, ApprovalStoreError):
+            shot.record.execution_status = "interrupted; input may have partially occurred"
             session.record(decision, "interrupted; input may have partially occurred")
             raise
 
           recovery.performed()
           acted_on = current
           last_decision = decision
+          shot.record.execution_status = "performed; outcome awaits next observation"
           session.record(decision, "performed; outcome awaits next observation")
           await emit(
             Event(
@@ -421,21 +469,35 @@ class Engine:
               },
             )
           )
-          await record(shot, "performed")
           check()
 
           after_owner = self.platform.frontmost_app()
           if after_owner != before_owner and (
             after_owner is None or not self.store.is_approved(after_owner)
           ):
-            await pause("The action changed focus to an unapproved or unidentified app.")
+            target = after_owner if after_owner is not None else "an unidentified app"
+            shot.record.pause = (
+              f"The action changed focus to {target}, which is unapproved for input."
+            )
+            session.notice(shot.record.pause)
+          await record(shot, "performed")
+          check()
+          if shot.record.pause is not None:
+            await pause(shot.record.pause)
 
-        except (RunLimit, TimeoutError):
-          await record_interruption()
-          await pause("The active run budget has been reached.", limit=True)
+        except (RunLimit, TimeoutError) as exc:
+          message = "The active run budget has been reached."
+          if pending is not None:
+            pending.record.pause = message
+          session.notice(message)
+          await record_interruption(exc)
+          await pause(message, limit=True)
 
-    except RunCancelled:
-      await record_interruption()
+    except asyncio.CancelledError as exc:
+      await record_interruption(exc)
+      raise
+    except RunCancelled as exc:
+      await record_interruption(exc)
       await emit(
         Event(
           "cancelled",
@@ -445,7 +507,7 @@ class Engine:
       )
     except ReleaseError as exc:
       self.input_uncertain = True
-      await record_interruption()
+      await record_interruption(exc)
       await emit(
         Event(
           "failed",
@@ -454,7 +516,7 @@ class Engine:
         )
       )
     except (InferenceError, PlatformError, ApprovalStoreError, ValueError, RuntimeError) as exc:
-      await record_interruption()
+      await record_interruption(exc)
       await emit(Event("failed", str(exc), metrics={"run_id": run_id}))
     finally:
       if self._active is token:

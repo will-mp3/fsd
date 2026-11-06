@@ -2,7 +2,6 @@ import pytest
 
 from fsd.platform.base import (
   MANDATORY_CAPABILITIES,
-  Capability,
   Frame,
   KeyCombo,
   Rect,
@@ -15,9 +14,9 @@ from fsd.platform.base import (
 
 def test_mandatory_capabilities_are_capture_and_owner_lookup() -> None:
   assert {
-    Capability.FILTERED_CAPTURE,
-    Capability.WINDOW_OWNER_LOOKUP,
-  } == MANDATORY_CAPABILITIES
+    "display_capture",
+    "window_owner_lookup",
+  } == {capability.value for capability in MANDATORY_CAPABILITIES}
 
 
 def test_rect_contains_is_half_open() -> None:

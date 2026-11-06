@@ -288,7 +288,7 @@ def test_missing_key_fails_before_entering_conversation(
   assert launch_chat(platform, store, out, err) == 2
   assert "OPENROUTER_API_KEY" in err.getvalue()
   assert out.getvalue() == ""
-  assert platform.capture_requests == []
+  assert platform.capture_calls == 0
 
 
 @pytest.mark.parametrize("reader_fails", [False, True])

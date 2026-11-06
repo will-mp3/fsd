@@ -1,6 +1,6 @@
 """The macOS implementation of the platform contract."""
 
-from collections.abc import Callable, Collection
+from collections.abc import Callable
 
 import Quartz
 
@@ -20,7 +20,7 @@ from fsd.platform.macos import apps, capture, input, permissions, windows
 class MacOSPlatform:
   capabilities = frozenset(
     {
-      Capability.FILTERED_CAPTURE,
+      Capability.DISPLAY_CAPTURE,
       Capability.WINDOW_OWNER_LOOKUP,
     }
   )
@@ -34,8 +34,8 @@ class MacOSPlatform:
   def frontmost_app(self) -> str | None:
     return apps.frontmost_app()
 
-  def capture(self, bundle_ids: Collection[str]) -> Frame:
-    return capture.capture(bundle_ids)
+  def capture(self) -> Frame:
+    return capture.capture()
 
   def windows(self) -> list[WindowInfo]:
     return windows.list_windows()

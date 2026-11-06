@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Annotated, Literal, Self, get_args
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -142,6 +142,7 @@ class Snapshot:
   run_id: str
   step: int
   png: bytes
+  record: dict[str, object] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)

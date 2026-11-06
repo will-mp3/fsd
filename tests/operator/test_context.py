@@ -5,6 +5,7 @@ import pytest
 from fsd.operator.config import Settings
 from fsd.operator.context import Session
 from fsd.operator.contracts import Decision
+from fsd.operator.recovery import STUCK_FEEDBACK
 from fsd.platform.base import Frame, Rect
 
 
@@ -23,6 +24,36 @@ def opening_decision() -> Decision:
       "previous_result": "none",
     }
   )
+
+
+@pytest.mark.parametrize("foreground", ["blocked.app", None])
+def test_observation_distinguishes_visible_owner_from_input_approvals(
+  foreground: str | None,
+) -> None:
+  session = Session(Settings())
+  observation = session.observe(frame(b"screen"), frozenset({"b", "a"}), foreground)
+  data = json.loads(observation.text)
+  assert data["foreground_app"] == foreground
+  assert data["input_approved_apps"] == ["a", "b"]
+
+
+@pytest.mark.parametrize("reset", ["notice", "begin", "guide", "progressed"])
+def test_warning_preserves_specific_feedback_and_stays_bounded_until_reset(reset: str) -> None:
+  session = Session(Settings())
+  session.notice("Click inside the approved app first.")
+  session.observe(frame(b"old"), frozenset())
+  for _ in range(10):
+    session.warn(STUCK_FEEDBACK)
+  observed = session.observe(frame(b"new"), frozenset())
+  data = json.loads(observed.text)
+  assert data["feedback"] == "Click inside the approved app first."
+  assert data["warning"] == STUCK_FEEDBACK
+  assert observed.previous is None
+  if reset == "progressed":
+    session.progressed()
+  else:
+    getattr(session, reset)("New information")
+  assert json.loads(session.observe(frame(b"next"), frozenset()).text)["warning"] == ""
 
 
 @pytest.mark.parametrize(
