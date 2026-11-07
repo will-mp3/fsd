@@ -3,6 +3,7 @@ from pathlib import Path
 
 import pytest
 
+from fsd.benchmark import fixtures
 from fsd.benchmark.contracts import BenchmarkError
 from fsd.benchmark.fixtures import create_workspace
 from fsd.benchmark.tasks import task_for
@@ -79,3 +80,100 @@ def test_write_failure_preserves_partial_workspace(
     create_workspace(workspace, task_for("finder-rename"))
 
   assert workspace.is_dir()
+
+
+@pytest.mark.parametrize("content", [b"", b"saved text\n"], ids=("empty", "text"))
+def test_read_regular_returns_exact_bytes(tmp_path: Path, content: bytes) -> None:
+  (tmp_path / "note.txt").write_bytes(content)
+
+  assert fixtures.read_regular(tmp_path, "note.txt", len(content)) == content
+
+
+def test_read_regular_returns_none_for_missing_file(tmp_path: Path) -> None:
+  assert fixtures.read_regular(tmp_path, "missing.txt", 10) is None
+
+
+def test_read_regular_caps_output_at_expected_size_plus_one(tmp_path: Path) -> None:
+  (tmp_path / "note.txt").write_bytes(b"x" * 100_000)
+
+  assert fixtures.read_regular(tmp_path, "note.txt", 8) == b"x" * 9
+
+
+def test_read_regular_rejects_negative_read_limit(tmp_path: Path) -> None:
+  (tmp_path / "note.txt").write_bytes(b"contents")
+
+  with pytest.raises(ValueError, match="nonnegative"):
+    fixtures.read_regular(tmp_path, "note.txt", -1)
+
+
+@pytest.mark.parametrize("boundary", ["workspace", "parent", "file", "dangling-file"])
+def test_read_regular_rejects_symlinks(tmp_path: Path, boundary: str) -> None:
+  external = tmp_path / "external"
+  external.mkdir()
+  (external / "note.txt").write_bytes(b"Outside the trial")
+  workspace = tmp_path / "workspace"
+  relative = "note.txt"
+  if boundary == "workspace":
+    workspace.symlink_to(external, target_is_directory=True)
+  else:
+    workspace.mkdir()
+    if boundary == "parent":
+      (workspace / "nested").symlink_to(external, target_is_directory=True)
+      relative = "nested/note.txt"
+    else:
+      target = external / ("note.txt" if boundary == "file" else "missing.txt")
+      (workspace / "note.txt").symlink_to(target)
+
+  with pytest.raises(fixtures.ArtifactMismatch):
+    fixtures.read_regular(workspace, relative, 100)
+
+
+def test_read_regular_rejects_directory_instead_of_file(tmp_path: Path) -> None:
+  (tmp_path / "note.txt").mkdir()
+
+  with pytest.raises(fixtures.ArtifactMismatch):
+    fixtures.read_regular(tmp_path, "note.txt", 10)
+
+
+@pytest.mark.parametrize("missing", ["workspace", "parent"])
+def test_missing_directory_is_a_mismatch_not_a_missing_file(tmp_path: Path, missing: str) -> None:
+  workspace = tmp_path / "workspace" if missing == "workspace" else tmp_path
+
+  with pytest.raises(fixtures.ArtifactMismatch):
+    fixtures.read_regular(workspace, "nested/note.txt", 10)
+  with pytest.raises(fixtures.ArtifactMismatch):
+    fixtures.is_absent(workspace, "nested/note.txt")
+
+
+def test_is_absent_accepts_only_a_missing_entry(tmp_path: Path) -> None:
+  assert fixtures.is_absent(tmp_path, "missing.txt") is True
+
+
+@pytest.mark.parametrize("kind", ["file", "directory", "symlink", "dangling-symlink"])
+def test_is_absent_rejects_existing_entries(tmp_path: Path, kind: str) -> None:
+  target = tmp_path / "note.txt"
+  if kind == "file":
+    target.write_bytes(b"data")
+  elif kind == "directory":
+    target.mkdir()
+  else:
+    destination = tmp_path / "destination.txt"
+    if kind == "symlink":
+      destination.write_bytes(b"data")
+    target.symlink_to(destination)
+
+  assert fixtures.is_absent(tmp_path, "note.txt") is False
+
+
+def test_read_regular_preserves_permission_errors(
+  tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+  (tmp_path / "note.txt").write_bytes(b"data")
+
+  def deny_open(self: Path, mode: str) -> None:
+    raise PermissionError("Test read denied")
+
+  monkeypatch.setattr(Path, "open", deny_open)
+
+  with pytest.raises(PermissionError):
+    fixtures.read_regular(tmp_path, "note.txt", 4)
