@@ -1,5 +1,10 @@
-import pytest
+import json
+from dataclasses import replace
 
+import pytest
+from pydantic import ValidationError
+
+from fsd.benchmark import contracts, tasks
 from fsd.benchmark.contracts import BenchmarkError
 from fsd.benchmark.tasks import task_for
 
@@ -67,3 +72,74 @@ def test_unknown_task_lists_supported_ids() -> None:
   assert "Supported tasks:" in message
   for task_id in ("textedit-edit-save", "finder-rename", "finder-move"):
     assert task_id in message
+
+
+def test_task_manifest_records_identity_and_initial_file_fingerprint() -> None:
+  task = task_for("textedit-edit-save")
+  manifest = tasks.task_manifest(task)
+
+  assert manifest.schema_version == 1
+  assert manifest.task_id == task.task_id
+  assert manifest.task_version == task.version
+  assert manifest.prompt == task.prompt
+  assert manifest.app_id == task.app_id
+  assert manifest.setup_protocol == 1
+  assert manifest.directories == task.directories
+  assert manifest.initial_sha256 == {
+    "note.txt": "e66d1758315c7cb232a366788ccd04f368112b47806e79cdda50bf56b905a93a"
+  }
+
+
+@pytest.mark.parametrize("task_id", ["textedit-edit-save", "finder-rename", "finder-move"])
+def test_task_manifest_survives_json_round_trip(task_id: str) -> None:
+  manifest = tasks.task_manifest(task_for(task_id))
+
+  restored = contracts.TaskManifest.model_validate_json(manifest.model_dump_json())
+
+  assert restored == manifest
+  assert restored.directories == task_for(task_id).directories
+
+
+def test_manifest_fingerprint_tracks_fixture_bytes_without_mutating_task() -> None:
+  original = task_for("textedit-edit-save")
+  changed = replace(original, initial_files=(("note.txt", b"Different starting text\n"),))
+
+  before = tasks.task_manifest(original)
+  after = tasks.task_manifest(changed)
+
+  assert before.initial_sha256["note.txt"] != after.initial_sha256["note.txt"]
+  assert tasks.task_manifest(original) == before
+  assert original.initial_files == (("note.txt", b"Status: draft\nOwner: Alex\n"),)
+
+
+@pytest.mark.parametrize(
+  ("field", "value"),
+  [
+    ("schema_version", 2),
+    ("schema_version", True),
+    ("task_version", 0),
+    ("task_version", True),
+    ("task_version", "1"),
+    ("setup_protocol", 2),
+    ("setup_protocol", True),
+    ("unexpected", "extra data"),
+  ],
+  ids=(
+    "unknown-schema",
+    "boolean-schema",
+    "zero-task-version",
+    "boolean-task-version",
+    "string-task-version",
+    "unknown-setup-protocol",
+    "boolean-setup-protocol",
+    "unknown-field",
+  ),
+)
+def test_task_manifest_rejects_invalid_saved_data(field: str, value: object) -> None:
+  data = tasks.task_manifest(task_for("textedit-edit-save")).model_dump(mode="json")
+  data[field] = value
+
+  with pytest.raises(ValidationError) as caught:
+    contracts.TaskManifest.model_validate_json(json.dumps(data))
+
+  assert any(error["loc"] == (field,) for error in caught.value.errors())

@@ -1,4 +1,6 @@
-from fsd.benchmark.contracts import BenchmarkError, TaskSpec
+import hashlib
+
+from fsd.benchmark.contracts import BenchmarkError, TaskManifest, TaskSpec
 
 _FINDER_CONTENTS = b"Benchmark fixture.\n"
 
@@ -67,3 +69,16 @@ def task_for(task_id: str) -> TaskSpec:
 
   supported = ", ".join(task.task_id for task in _TASKS) or "none registered"
   raise BenchmarkError(f"Unknown benchmark task {task_id!r}. Supported tasks: {supported}.")
+
+
+def task_manifest(task: TaskSpec) -> TaskManifest:
+  return TaskManifest(
+    task_id=task.task_id,
+    task_version=task.version,
+    prompt=task.prompt,
+    app_id=task.app_id,
+    initial_sha256={
+      path: hashlib.sha256(content).hexdigest() for path, content in task.initial_files
+    },
+    directories=task.directories,
+  )
