@@ -3,6 +3,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+Termination = Literal["done", "help", "limit", "cencelled", "failed", "interrupted"]
+
 
 class BenchmarkError(Exception):
   """A benchmark problem that can be reported without a traceback."""
