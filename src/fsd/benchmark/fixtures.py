@@ -1,7 +1,7 @@
 import stat
 from pathlib import Path
 
-from fsd.benchmark.contracts import BenchmarkError, TaskSpec
+from fsd.benchmark.contracts import BenchmarkError, GoalScore, TaskSpec
 
 
 class ArtifactMismatch(Exception):
@@ -87,3 +87,33 @@ def is_absent(workspace: Path, relative: str) -> bool:
   except FileNotFoundError:
     return True
   return False
+
+
+def score_workspace(workspace: Path, task: TaskSpec) -> GoalScore:
+  try:
+    for name, expected in task.final_files:
+      if read_regular(workspace, name, len(expected)) != expected:
+        return GoalScore(
+          result="fail",
+          evidence=f"Unexpected contents: {name}",
+        )
+
+    for name in task.absent_after:
+      if not is_absent(workspace, name):
+        return GoalScore(
+          result="fail",
+          evidence=f"Original path remains: {name}",
+        )
+
+  except ArtifactMismatch as exc:
+    return GoalScore(result="fail", evidence=str(exc))
+  except OSError:
+    return GoalScore(
+      result="error",
+      evidence="Could not read the task artifacts.",
+    )
+
+  return GoalScore(
+    result="pass",
+    evidence="All required artifact conditions hold.",
+  )

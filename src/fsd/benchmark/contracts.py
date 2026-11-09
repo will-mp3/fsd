@@ -52,3 +52,8 @@ class TaskManifest(StoredModel):
   setup_protocol: Literal[1] = 1
   initial_sha256: dict[str, str]
   directories: tuple[str, ...]
+
+
+class GoalScore(StoredModel):
+  result: Literal["pass", "fail", "error"]
+  evidence: str = Field(max_length=500)
