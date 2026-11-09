@@ -117,3 +117,42 @@ def score_workspace(workspace: Path, task: TaskSpec) -> GoalScore:
     result="pass",
     evidence="All required artifact conditions hold.",
   )
+
+
+def validate_pristine(workspace: Path, task: TaskSpec) -> None:
+  initial_paths = {_fixture_path(name) for name, _ in task.initial_files}
+  directory_paths = tuple(_fixture_path(name) for name in task.directories)
+
+  try:
+    _require_directory(workspace)
+
+    for name, expected in task.initial_files:
+      if read_regular(workspace, name, len(expected)) != expected:
+        raise ArtifactMismatch(f"Starting contents differ: {name}")
+
+    for name in task.directories:
+      _require_directory(_checked_target(workspace, name))
+
+    for name, _ in task.final_files:
+      if _fixture_path(name) not in initial_paths and not is_absent(workspace, name):
+        raise ArtifactMismatch(f"Destination already exists: {name}")
+
+    allowed = initial_paths | set(directory_paths)
+    scan_directories = [workspace]
+    scan_directories.extend(workspace / path for path in directory_paths)
+
+    for directory in scan_directories:
+      for entry in directory.iterdir():
+        if entry.name == ".DS_Store":
+          continue
+
+        relative = entry.relative_to(workspace)
+        if relative not in allowed:
+          raise ArtifactMismatch(
+            f"Unexpected workspace entry: {relative.as_posix()}"
+          )
+
+  except ArtifactMismatch as exc:
+    raise BenchmarkError(f"Workspace is not pristine: {exc}") from exc
+  except OSError as exc:
+    raise BenchmarkError("Could not inspect the starting workspace.") from exc
