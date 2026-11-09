@@ -5,7 +5,7 @@ from fsd.benchmark.contracts import BenchmarkError, GoalScore, TaskSpec
 
 
 class ArtifactMismatch(Exception):
-  """An artifact does not satsfy the task's required filesystem structure."""
+  """An artifact does not satisfy the task's required filesystem structure."""
 
 
 def _fixture_path(relative: str) -> Path:
@@ -148,9 +148,7 @@ def validate_pristine(workspace: Path, task: TaskSpec) -> None:
 
         relative = entry.relative_to(workspace)
         if relative not in allowed:
-          raise ArtifactMismatch(
-            f"Unexpected workspace entry: {relative.as_posix()}"
-          )
+          raise ArtifactMismatch(f"Unexpected workspace entry: {relative.as_posix()}")
 
   except ArtifactMismatch as exc:
     raise BenchmarkError(f"Workspace is not pristine: {exc}") from exc

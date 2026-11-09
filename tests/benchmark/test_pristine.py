@@ -14,7 +14,7 @@ def test_fresh_workspace_is_ready_but_goal_is_not_complete(tmp_path: Path, task_
   workspace = tmp_path / "workspace"
   fixtures.create_workspace(workspace, task)
 
-  assert fixtures.validate_pristine(workspace, task) is None
+  fixtures.validate_pristine(workspace, task)
   assert fixtures.score_workspace(workspace, task).result == "fail"
 
 
@@ -107,7 +107,7 @@ def test_finder_metadata_is_ignored_in_fixture_directories(tmp_path: Path) -> No
   for directory in (workspace, workspace / "Archive"):
     (directory / ".DS_Store").write_bytes(b"Finder metadata")
 
-  assert fixtures.validate_pristine(workspace, task) is None
+  fixtures.validate_pristine(workspace, task)
 
 
 def test_unreadable_starting_file_prevents_readiness(
