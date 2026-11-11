@@ -15,6 +15,7 @@ def step_event(
   cost: float | None = None,
   outcome: str = "performed",
   frame: Frame | None = None,
+  refusal: dict[str, str | None] | None = None,
 ) -> Event:
   if frame is None:
     frame = Frame(png(0), 100, 100, Rect(0.0, 0.0, 50.0, 50.0))
@@ -23,6 +24,7 @@ def step_event(
     step,
     frame,
     frozenset({"app"}),
+    refusal=refusal,
   )
   has_verification = any(purpose == "verification" for purpose, _ in attempts)
   for purpose, status in attempts:
@@ -33,7 +35,9 @@ def step_event(
     attempt = record.attempt(cast(Purpose, purpose), "")
     if status == "completed":
       attempt.complete(
-        verdict() if purpose == "verification" else decision("done" if has_verification else "act")
+        verdict(complete=outcome != "rejected_done")
+        if purpose == "verification"
+        else decision("done" if has_verification else "act")
       )
     else:
       attempt.status = cast(AttemptStatus, status)

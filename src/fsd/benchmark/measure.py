@@ -55,6 +55,8 @@ class TrialCollector:
       "decision_attempts": 0,
       "verification_attempts": 0,
       "invalid_attempts": 0,
+      "refusals": 0,
+      "completion_rejections": 0,
     }
 
   @property
@@ -162,6 +164,11 @@ class TrialCollector:
         self._counts[f"{attempt.purpose}_attempts"] += 1
         if attempt.status == "invalid":
           self._counts["invalid_attempts"] += 1
+
+      if record.refusal is not None:
+        self._counts["refusals"] += 1
+      if record.outcome == "rejected_done":
+        self._counts["completion_rejections"] += 1
 
     if event.kind == "action":
       self._counts["performed_actions"] += 1
