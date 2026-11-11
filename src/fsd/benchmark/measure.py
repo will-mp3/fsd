@@ -1,7 +1,42 @@
 import re
+from typing import Literal
 
-from fsd.benchmark.contracts import BenchmarkError, Measurements, Termination
+from pydantic import ConfigDict, Field
+
+from fsd.benchmark.contracts import (
+  BenchmarkError,
+  FrameGeometry,
+  Measurements,
+  StoredModel,
+  Termination,
+)
 from fsd.operator.contracts import Event, Reply
+from fsd.operator.records import Purpose
+
+
+class AttemptView(StoredModel):
+  model_config = ConfigDict(extra="ignore")
+
+  purpose: Purpose
+  status: Literal["pending", "completed", "invalid", "interrupted", "error"]
+
+
+class FrameView(FrameGeometry):
+  model_config = ConfigDict(extra="ignore")
+
+  filename: str
+
+
+class StepView(StoredModel):
+  model_config = ConfigDict(extra="ignore")
+
+  schema_version: Literal[1]
+  run_id: str
+  step: int = Field(ge=0)
+  outcome: str
+  frame: FrameView
+  attempts: tuple[AttemptView, ...]
+  refusal: dict[str, str | None] | None
 
 
 class TrialCollector:
