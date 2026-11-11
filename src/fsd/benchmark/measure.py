@@ -45,10 +45,13 @@ class TrialCollector:
     self._run_id: str | None = None
     self._termination: Termination | None = None
     self._cancellation_recorded = False
+    self._geometry: FrameGeometry | None = None
+    self._seen_steps: set[tuple[str, str]] = set()
     self._counts: dict[str, int] = {
       "help_events": 0,
       "limit_events": 0,
       "performed_actions": 0,
+      "captured_steps": 0,
     }
 
   @property
@@ -58,6 +61,10 @@ class TrialCollector:
   @property
   def termination(self) -> Termination | None:
     return self._termination
+
+  @property
+  def geometry(self) -> FrameGeometry | None:
+    return self._geometry
 
   def measurements(self, duration_seconds: float) -> Measurements:
     return Measurements(
@@ -92,7 +99,7 @@ class TrialCollector:
       raise BenchmarkError("Snapshot and event run IDs do not match.")
 
     if type(snapshot.step) is not int or snapshot.step != record.step:
-      raise BenchmarkError("Snapshot and record step numbers do not matcj.")
+      raise BenchmarkError("Snapshot and record step numbers do not match.")
 
     metrics = event.metrics or {}
     expected_numbers = {
@@ -115,7 +122,7 @@ class TrialCollector:
 
   def observe(self, event: Event) -> Reply | None:
     run_id = self._validate_run_id(event)
-    self._validate_snapshot(event, run_id)
+    record = self._validate_snapshot(event, run_id)
 
     if self._termination is not None:
       if (
@@ -128,8 +135,26 @@ class TrialCollector:
 
       raise BenchmarkError("Received an event after the trial had stopped.")
 
+    geometry = self._geometry
+    if record is not None:
+      if (record.run_id, record.step) in self._seen_steps:
+        raise BenchmarkError("Duplicate cpatured step.")
+
+      geometry = FrameGeometry(
+        width=record.frame.width,
+        height=record.frame.height,
+        screen_rect=record.frame.screen_rect,
+      )
+      if self._geometry is not None and geometry != self._geometry:
+        raise BenchmarkError("Capture geometry changed during the trial.")
+
     if run_id is not None:
       self._run_id = run_id
+
+    if record is not None:
+      self._seen_steps.add((record.run_id, record.step))
+      self._geometry = geometry
+      self._counts["captured_steps"] += 1
 
     if event.kind == "action":
       self._counts["performed_actions"] += 1

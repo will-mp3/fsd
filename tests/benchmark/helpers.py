@@ -14,11 +14,14 @@ def step_event(
   attempts: tuple[tuple[str, str], ...],
   cost: float | None = None,
   outcome: str = "performed",
+  frame: Frame | None = None,
 ) -> Event:
+  if frame is None:
+    frame = Frame(png(0), 100, 100, Rect(0.0, 0.0, 50.0, 50.0))
   record = StepRecord(
     "run",
     step,
-    Frame(png(0), 100, 100, Rect(0.0, 0.0, 50.0, 50.0)),
+    frame,
     frozenset({"app"}),
   )
   has_verification = any(purpose == "verification" for purpose, _ in attempts)
@@ -38,8 +41,8 @@ def step_event(
   metrics: dict[str, object] = {
     "run_id": "run",
     "step": step,
-    "frame_width": 100,
-    "frame_height": 100,
+    "frame_width": frame.width,
+    "frame_height": frame.height,
     "outcome": outcome,
   }
   if cost is not None:
