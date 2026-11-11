@@ -91,6 +91,26 @@ class TrialCollector:
     if snapshot.run_id != run_id or record.run_id != run_id:
       raise BenchmarkError("Snapshot and event run IDs do not match.")
 
+    if type(snapshot.step) is not int or snapshot.step != record.step:
+      raise BenchmarkError("Snapshot and record step numbers do not matcj.")
+
+    metrics = event.metrics or {}
+    expected_numbers = {
+      "step": record.step,
+      "frame_width": record.frame.width,
+      "frame_height": record.frame.height,
+    }
+    for name, expected in expected_numbers.items():
+      actual = metrics.get(name)
+      if type(actual) is not int or actual != expected:
+        raise BenchmarkError(f"Event {name} does not match the step record.")
+
+    if record.frame.filename != f"{record.step}.png":
+      raise BenchmarkError("Snapshot filename does not match its step number.")
+
+    if metrics.get("outcome") != record.outcome:
+      raise BenchmarkError("Event outcome does not match the step record.")
+
     return record
 
   def observe(self, event: Event) -> Reply | None:

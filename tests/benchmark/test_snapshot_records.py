@@ -1,5 +1,6 @@
 import json
 from dataclasses import replace
+from typing import cast
 
 import pytest
 
@@ -44,6 +45,61 @@ def test_unsupported_snapshot_schema_does_not_bind_collector_identity() -> None:
 
   with pytest.raises(BenchmarkError):
     collector.observe(replace(event, snapshot=bad_snapshot))
+
+  assert collector.run_id is None
+  assert collector.termination is None
+  assert collector.measurements(duration_seconds=0.0) == before
+  assert collector.observe(event) is None
+  assert collector.run_id == "run"
+
+
+@pytest.mark.parametrize(
+  ("layer", "field", "value"),
+  [
+    ("snapshot", "step", 1),
+    ("record", "step", 1),
+    ("metrics", "step", 1),
+    ("metrics", "outcome", "done"),
+    ("metrics", "frame_width", 200),
+    ("metrics", "frame_height", 200),
+    ("frame", "filename", "1.png"),
+    ("snapshot", "step", False),
+    ("snapshot", "step", 0.0),
+    ("metrics", "step", False),
+    ("metrics", "step", 0.0),
+    ("metrics", "frame_width", 100.0),
+    ("metrics", "frame_height", 100.0),
+    ("metrics", "step", None),
+  ],
+)
+def test_inconsistent_step_metadata_does_not_change_collector_state(
+  layer: str,
+  field: str,
+  value: object,
+) -> None:
+  collector = measure.TrialCollector()
+  event = step_event(0, attempts=(("decision", "completed"),))
+  snapshot = event.snapshot
+  assert snapshot is not None
+  if layer == "snapshot":
+    assert field == "step"
+    # Bypass the annotation deliberately to exercise malformed runtime values.
+    bad_event = replace(event, snapshot=replace(snapshot, step=cast(int, value)))
+  elif layer == "metrics":
+    bad_event = replace(event, metrics={**(event.metrics or {}), field: value})
+  else:
+    record = dict(snapshot.record)
+    if layer == "frame":
+      frame = record["frame"]
+      assert isinstance(frame, dict)
+      record["frame"] = {**frame, field: value}
+    else:
+      record[field] = value
+    bad_event = replace(event, snapshot=replace(snapshot, record=record))
+  before = collector.measurements(duration_seconds=0.0)
+
+  with pytest.raises(BenchmarkError):
+    collector.observe(bad_event)
 
   assert collector.run_id is None
   assert collector.termination is None
