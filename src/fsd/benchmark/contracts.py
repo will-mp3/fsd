@@ -62,4 +62,18 @@ class GoalScore(StoredModel):
 
 
 class Measurements(StoredModel):
-  pass
+  captured_steps: int = Field(default=0, ge=0)
+  performed_actions: int = Field(default=0, ge=0)
+  decision_attempts: int = Field(default=0, ge=0)
+  verification_attempts: int = Field(default=0, ge=0)
+  invalid_attempts: int = Field(default=0, ge=0)
+  refusals: int = Field(default=0, ge=0)
+  stuck_warnings: int = Field(default=0, ge=0)
+  stuck_escalations: int = Field(default=0, ge=0)
+  help_events: int = Field(default=0, ge=0)
+  limit_events: int = Field(default=0, ge=0)
+  completion_rejections: int = Field(default=0, ge=0)
+  duration_seconds: float = Field(ge=0)
+  reported_cost: float | None = Field(default=None, ge=0)
+  cost_measurements: int = Field(default=0, ge=0)
+  attempts_without_cost: int = Field(default=0, ge=0)
