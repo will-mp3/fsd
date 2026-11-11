@@ -52,6 +52,9 @@ class TrialCollector:
       "limit_events": 0,
       "performed_actions": 0,
       "captured_steps": 0,
+      "decision_attempts": 0,
+      "verification_attempts": 0,
+      "invalid_attempts": 0,
     }
 
   @property
@@ -155,6 +158,10 @@ class TrialCollector:
       self._seen_steps.add((record.run_id, record.step))
       self._geometry = geometry
       self._counts["captured_steps"] += 1
+      for attempt in record.attempts:
+        self._counts[f"{attempt.purpose}_attempts"] += 1
+        if attempt.status == "invalid":
+          self._counts["invalid_attempts"] += 1
 
     if event.kind == "action":
       self._counts["performed_actions"] += 1
