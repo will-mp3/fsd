@@ -12,6 +12,7 @@ class TrialCollector:
     self._counts: dict[str, int] = {
       "help_events": 0,
       "limit_events": 0,
+      "performed_actions": 0,
     }
 
   @property
@@ -57,6 +58,9 @@ class TrialCollector:
 
     if run_id is not None:
       self._run_id = run_id
+
+    if event.kind == "action":
+      self._counts["performed_actions"] += 1
 
     if event.kind == "help":
       self._termination = "limit" if event.limit else "help"

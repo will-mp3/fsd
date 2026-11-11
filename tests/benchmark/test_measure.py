@@ -47,6 +47,37 @@ def test_stop_counts_distinguish_help_from_limits_without_counting_cancellation(
   assert confirmed.duration_seconds == 2.0
 
 
+def test_only_accepted_action_events_increment_performed_actions() -> None:
+  collector = measure.TrialCollector()
+  collector.observe(Event("action", "First action", metrics={"run_id": "run"}))
+  first = collector.measurements(duration_seconds=1.0)
+
+  collector.observe(Event("progress", "Continuing"))
+  collector.observe(Event("action", "Second action", metrics={"run_id": "run"}))
+  collector.observe(Event("metrics", "Totals", metrics={"run_id": "run"}))
+  collector.observe(Event("done", "Complete", metrics={"run_id": "run"}))
+  final = collector.measurements(duration_seconds=2.0)
+
+  assert first.performed_actions == 1
+  assert final.performed_actions == 2
+
+
+@pytest.mark.parametrize("after_stop", [False, True], ids=("wrong-run", "after-stop"))
+def test_rejected_action_does_not_change_measurements(after_stop: bool) -> None:
+  collector = measure.TrialCollector()
+  collector.observe(Event("action", "Accepted", metrics={"run_id": "run"}))
+  if after_stop:
+    collector.observe(Event("done", "Complete", metrics={"run_id": "run"}))
+  before = collector.measurements(duration_seconds=1.0)
+
+  with pytest.raises(BenchmarkError, match="stopped" if after_stop else "different run"):
+    collector.observe(
+      Event("action", "Rejected", metrics={"run_id": "run" if after_stop else "other"})
+    )
+
+  assert collector.measurements(duration_seconds=1.0) == before
+
+
 @pytest.mark.parametrize("kind", ["done", "failed", "cancelled"])
 def test_direct_terminal_event_records_its_reason(
   kind: Literal["done", "failed", "cancelled"],
