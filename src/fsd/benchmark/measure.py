@@ -46,7 +46,7 @@ class TrialCollector:
     self._termination: Termination | None = None
     self._cancellation_recorded = False
     self._geometry: FrameGeometry | None = None
-    self._seen_steps: set[tuple[str, str]] = set()
+    self._seen_steps: set[tuple[str, int]] = set()
     self._counts: dict[str, int] = {
       "help_events": 0,
       "limit_events": 0,
@@ -138,7 +138,7 @@ class TrialCollector:
     geometry = self._geometry
     if record is not None:
       if (record.run_id, record.step) in self._seen_steps:
-        raise BenchmarkError("Duplicate cpatured step.")
+        raise BenchmarkError("Duplicate captured step.")
 
       geometry = FrameGeometry(
         width=record.frame.width,
