@@ -57,6 +57,8 @@ class TrialCollector:
       "invalid_attempts": 0,
       "refusals": 0,
       "completion_rejections": 0,
+      "stuck_warnings": 0,
+      "stuck_escalations": 0,
     }
 
   @property
@@ -169,6 +171,12 @@ class TrialCollector:
         self._counts["refusals"] += 1
       if record.outcome == "rejected_done":
         self._counts["completion_rejections"] += 1
+
+      stuck = (event.metrics or {}).get("stuck")
+      if stuck == "warn":
+        self._counts["stuck_warnings"] += 1
+      elif stuck == "escalate":
+        self._counts["stuck_escalations"] += 1
 
     if event.kind == "action":
       self._counts["performed_actions"] += 1

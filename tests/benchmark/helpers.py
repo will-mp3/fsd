@@ -16,6 +16,8 @@ def step_event(
   outcome: str = "performed",
   frame: Frame | None = None,
   refusal: dict[str, str | None] | None = None,
+  stuck: Literal["warn", "escalate"] | None = None,
+  warning: str = "",
 ) -> Event:
   if frame is None:
     frame = Frame(png(0), 100, 100, Rect(0.0, 0.0, 50.0, 50.0))
@@ -51,9 +53,11 @@ def step_event(
   }
   if cost is not None:
     metrics["cost"] = cost
+  if stuck is not None:
+    metrics["stuck"] = stuck
   return Event(
     "metrics",
     "Step recorded",
     metrics=metrics,
-    snapshot=record.snapshot(outcome, "", ""),
+    snapshot=record.snapshot(outcome, "", warning),
   )
