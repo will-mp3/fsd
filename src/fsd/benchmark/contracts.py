@@ -3,7 +3,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-Termination = Literal["done", "help", "limit", "cencelled", "failed", "interrupted"]
+Termination = Literal["done", "help", "limit", "cancelled", "failed", "interrupted"]
 
 
 class BenchmarkError(Exception):
