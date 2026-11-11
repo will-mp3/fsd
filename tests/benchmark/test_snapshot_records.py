@@ -1,22 +1,22 @@
 import json
+from dataclasses import replace
+
+import pytest
 
 from fsd.benchmark import measure
-from fsd.operator.records import StepRecord
-from fsd.platform.base import Frame, Rect
-from tests.operator.helpers import decision, png
+from fsd.benchmark.contracts import BenchmarkError
+from fsd.platform.base import Rect
+from tests.benchmark.helpers import step_event
 
 
 def test_step_view_reads_measurement_fields_from_a_full_engine_record() -> None:
-  record = StepRecord(
-    "run",
+  event = step_event(
     3,
-    Frame(png(0), 100, 100, Rect(0.0, 0.0, 50.0, 50.0)),
-    frozenset({"app"}),
+    attempts=(("decision", "completed"), ("verification", "pending")),
+    outcome="interrupted",
   )
-  record.attempt("decision", "").complete(decision("done"))
-  record.attempt("verification", "")
-  record.interruption = "RunCancelled"
-  snapshot = record.snapshot("interrupted", "Previous feedback", "")
+  snapshot = event.snapshot
+  assert snapshot is not None
 
   view = measure.StepView.model_validate_json(json.dumps(snapshot.record))
 
@@ -33,3 +33,45 @@ def test_step_view_reads_measurement_fields_from_a_full_engine_record() -> None:
     ("verification", "pending"),
   ]
   assert view.refusal is None
+
+
+def test_unsupported_snapshot_schema_does_not_bind_collector_identity() -> None:
+  collector = measure.TrialCollector()
+  event = step_event(0, attempts=(("decision", "completed"),))
+  assert event.snapshot is not None
+  bad_snapshot = replace(event.snapshot, record={**event.snapshot.record, "schema_version": 2})
+  before = collector.measurements(duration_seconds=0.0)
+
+  with pytest.raises(BenchmarkError):
+    collector.observe(replace(event, snapshot=bad_snapshot))
+
+  assert collector.run_id is None
+  assert collector.termination is None
+  assert collector.measurements(duration_seconds=0.0) == before
+  assert collector.observe(event) is None
+  assert collector.run_id == "run"
+
+
+@pytest.mark.parametrize("layer", ["snapshot", "record", "metrics"])
+def test_conflicting_snapshot_run_ids_do_not_change_collector_state(layer: str) -> None:
+  collector = measure.TrialCollector()
+  event = step_event(0, attempts=(("decision", "completed"),))
+  snapshot = event.snapshot
+  assert snapshot is not None
+  if layer == "snapshot":
+    bad_event = replace(event, snapshot=replace(snapshot, run_id="other"))
+  elif layer == "record":
+    bad_event = replace(
+      event,
+      snapshot=replace(snapshot, record={**snapshot.record, "run_id": "other"}),
+    )
+  else:
+    bad_event = replace(event, metrics={**(event.metrics or {}), "run_id": "other"})
+  before = collector.measurements(duration_seconds=0.0)
+
+  with pytest.raises(BenchmarkError, match="run ID"):
+    collector.observe(bad_event)
+
+  assert collector.run_id is None
+  assert collector.termination is None
+  assert collector.measurements(duration_seconds=0.0) == before

@@ -1,3 +1,4 @@
+import json
 import re
 from typing import Literal
 
@@ -77,8 +78,24 @@ class TrialCollector:
 
     return candidate
 
+  def _validate_snapshot(self, event: Event, run_id: str | None) -> StepView | None:
+    snapshot = event.snapshot
+    if snapshot is None:
+      return None
+
+    try:
+      record = StepView.model_validate_json(json.dumps(snapshot.record, allow_nan=False))
+    except (TypeError, ValueError) as exc:
+      raise BenchmarkError("Invalid benchmark step record.") from exc
+
+    if snapshot.run_id != run_id or record.run_id != run_id:
+      raise BenchmarkError("Snapshot and event run IDs do not match.")
+
+    return record
+
   def observe(self, event: Event) -> Reply | None:
     run_id = self._validate_run_id(event)
+    self._validate_snapshot(event, run_id)
 
     if self._termination is not None:
       if (
