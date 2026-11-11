@@ -1,6 +1,6 @@
 import re
 
-from fsd.benchmark.contracts import BenchmarkError, Termination
+from fsd.benchmark.contracts import BenchmarkError, Measurements, Termination
 from fsd.operator.contracts import Event, Reply
 
 
@@ -9,6 +9,10 @@ class TrialCollector:
     self._run_id: str | None = None
     self._termination: Termination | None = None
     self._cancellation_recorded = False
+    self._counts: dict[str, int] = {
+      "help_events": 0,
+      "limit_events": 0,
+    }
 
   @property
   def run_id(self) -> str | None:
@@ -17,6 +21,12 @@ class TrialCollector:
   @property
   def termination(self) -> Termination | None:
     return self._termination
+
+  def measurements(self, duration_seconds: float) -> Measurements:
+    return Measurements(
+      duration_seconds=duration_seconds,
+      **self._counts,
+    )
 
   def _validate_run_id(self, event: Event) -> str | None:
     if event.kind == "progress" and not event.metrics and event.snapshot is None:
@@ -50,6 +60,7 @@ class TrialCollector:
 
     if event.kind == "help":
       self._termination = "limit" if event.limit else "help"
+      self._counts["limit_events" if event.limit else "help_events"] += 1
       return Reply(cancel=True)
 
     if event.kind == "done":

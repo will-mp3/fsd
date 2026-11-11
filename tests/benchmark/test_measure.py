@@ -19,6 +19,34 @@ def test_help_reason_survives_engine_cancellation(limited: bool, reason: str) ->
   assert collector.termination == reason
 
 
+@pytest.mark.parametrize(
+  ("limited", "expected_help", "expected_limit"),
+  [(False, 1, 0), (True, 0, 1)],
+  ids=("help", "limit"),
+)
+def test_stop_counts_distinguish_help_from_limits_without_counting_cancellation(
+  limited: bool,
+  expected_help: int,
+  expected_limit: int,
+) -> None:
+  collector = measure.TrialCollector()
+  before = collector.measurements(duration_seconds=0.0)
+
+  collector.observe(Event("help", "Stop", limit=limited, metrics={"run_id": "run"}))
+  stopped = collector.measurements(duration_seconds=1.5)
+  collector.observe(Event("cancelled", "Stopped", metrics={"run_id": "run"}))
+  confirmed = collector.measurements(duration_seconds=2.0)
+
+  assert before.help_events == 0
+  assert before.limit_events == 0
+  assert stopped.help_events == expected_help
+  assert stopped.limit_events == expected_limit
+  assert stopped.duration_seconds == 1.5
+  assert confirmed.help_events == expected_help
+  assert confirmed.limit_events == expected_limit
+  assert confirmed.duration_seconds == 2.0
+
+
 @pytest.mark.parametrize("kind", ["done", "failed", "cancelled"])
 def test_direct_terminal_event_records_its_reason(
   kind: Literal["done", "failed", "cancelled"],
