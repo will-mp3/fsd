@@ -64,3 +64,92 @@ def test_help_allows_only_one_following_cancellation() -> None:
     collector.observe(Event("cancelled", "Repeated", metrics={"run_id": "run"}))
 
   assert collector.termination == "help"
+
+
+@pytest.mark.parametrize("run_id", ["run", "0123456789abcdef", "run_1-test"])
+def test_collector_records_the_first_run_id(run_id: str) -> None:
+  collector = measure.TrialCollector()
+
+  assert collector.run_id is None
+  collector.observe(Event("done", "Complete", metrics={"run_id": run_id}))
+
+  assert collector.run_id == run_id
+  assert collector.termination == "done"
+
+
+@pytest.mark.parametrize("metrics", [None, {}], ids=("none", "empty"))
+def test_terminal_event_rejects_missing_run_id(metrics: dict[str, object] | None) -> None:
+  collector = measure.TrialCollector()
+
+  with pytest.raises(BenchmarkError, match="run ID"):
+    collector.observe(Event("done", "Complete", metrics=metrics))
+
+  assert collector.run_id is None
+  assert collector.termination is None
+
+
+@pytest.mark.parametrize(
+  "run_id",
+  [None, True, 12, "", " ", ".", "..", "../outside", "run/other", "run\\other", "run\n", "x" * 65],
+  ids=(
+    "null",
+    "boolean",
+    "number",
+    "empty",
+    "space",
+    "dot",
+    "parent",
+    "traversal",
+    "slash",
+    "backslash",
+    "newline",
+    "too-long",
+  ),
+)
+def test_invalid_run_id_cannot_change_collector_state(run_id: object) -> None:
+  collector = measure.TrialCollector()
+
+  with pytest.raises(BenchmarkError, match="run ID"):
+    collector.observe(Event("help", "Stop", metrics={"run_id": run_id}))
+
+  assert collector.run_id is None
+  assert collector.termination is None
+
+
+@pytest.mark.parametrize("metrics", [None, {}], ids=("none", "empty"))
+def test_informational_progress_does_not_assign_or_clear_run_id(
+  metrics: dict[str, object] | None,
+) -> None:
+  collector = measure.TrialCollector()
+
+  collector.observe(Event("progress", "Starting", metrics=metrics))
+  assert collector.run_id is None
+  collector.observe(Event("progress", "Identified", metrics={"run_id": "run"}))
+  collector.observe(Event("progress", "Continuing", metrics=metrics))
+
+  assert collector.run_id == "run"
+  assert collector.termination is None
+
+
+def test_another_run_cannot_change_the_stopping_reason() -> None:
+  collector = measure.TrialCollector()
+  collector.observe(Event("progress", "Starting", metrics={"run_id": "first"}))
+
+  with pytest.raises(BenchmarkError, match="different run"):
+    collector.observe(Event("help", "Stop", metrics={"run_id": "second"}))
+
+  assert collector.run_id == "first"
+  assert collector.termination is None
+  assert collector.observe(Event("help", "Stop", metrics={"run_id": "first"})) == Reply(cancel=True)
+
+
+def test_rejected_cancellation_does_not_consume_the_expected_confirmation() -> None:
+  collector = measure.TrialCollector()
+  collector.observe(Event("help", "Stop", metrics={"run_id": "first"}))
+
+  with pytest.raises(BenchmarkError, match="different run"):
+    collector.observe(Event("cancelled", "Wrong run", metrics={"run_id": "second"}))
+
+  assert collector.observe(Event("cancelled", "Stopped", metrics={"run_id": "first"})) is None
+  assert collector.run_id == "first"
+  assert collector.termination == "help"
