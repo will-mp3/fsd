@@ -3,6 +3,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from fsd.platform.base import Rect
+
 Termination = Literal["done", "help", "limit", "cancelled", "failed", "interrupted"]
 
 
@@ -59,6 +61,12 @@ class TaskManifest(StoredModel):
 class GoalScore(StoredModel):
   result: Literal["pass", "fail", "error"]
   evidence: str = Field(max_length=500)
+
+
+class FrameGeometry(StoredModel):
+  width: int = Field(gt=0)
+  height: int = Field(gt=0)
+  screen_rect: Rect
 
 
 class Measurements(StoredModel):
