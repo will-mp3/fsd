@@ -59,3 +59,7 @@ class TaskManifest(StoredModel):
 class GoalScore(StoredModel):
   result: Literal["pass", "fail", "error"]
   evidence: str = Field(max_length=500)
+
+
+class Measurements(StoredModel):
+  pass
