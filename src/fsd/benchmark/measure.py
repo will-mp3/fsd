@@ -48,6 +48,7 @@ class TrialCollector:
     self._cancellation_recorded = False
     self._geometry: FrameGeometry | None = None
     self._seen_steps: set[tuple[str, int]] = set()
+    self._known_cost = 0.0
     self._counts: dict[str, int] = {
       "help_events": 0,
       "limit_events": 0,
@@ -60,6 +61,8 @@ class TrialCollector:
       "completion_rejections": 0,
       "stuck_warnings": 0,
       "stuck_escalations": 0,
+      "cost_measurements": 0,
+      "attempts_without_cost": 0,
     }
 
   @property
@@ -77,6 +80,7 @@ class TrialCollector:
   def measurements(self, duration_seconds: float) -> Measurements:
     return Measurements(
       duration_seconds=duration_seconds,
+      reported_cost=self._known_cost if self._counts["cost_measurements"] else None,
       **self._counts,
     )
 
@@ -165,6 +169,8 @@ class TrialCollector:
       raise BenchmarkError("Received an event after the trial had stopped.")
 
     geometry = self._geometry
+    cost: float | None = None
+    known_cost = self._known_cost
     if record is not None:
       if (record.run_id, record.step) in self._seen_steps:
         raise BenchmarkError("Duplicate captured step.")
@@ -177,7 +183,11 @@ class TrialCollector:
       if self._geometry is not None and geometry != self._geometry:
         raise BenchmarkError("Capture geometry changed during the trial.")
 
-      self._validate_cost(event, record)
+      cost = self._validate_cost(event, record)
+      if cost is not None:
+        known_cost += cost
+        if not math.isfinite(known_cost):
+          raise BenchmarkError("Reported cost total is not finite.")
 
     if run_id is not None:
       self._run_id = run_id
@@ -185,7 +195,11 @@ class TrialCollector:
     if record is not None:
       self._seen_steps.add((record.run_id, record.step))
       self._geometry = geometry
+      self._known_cost = known_cost
       self._counts["captured_steps"] += 1
+      if cost is not None:
+        self._counts["cost_measurements"] += 1
+      self._counts["attempts_without_cost"] += max(0, len(record.attempts) - int(cost is not None))
       for attempt in record.attempts:
         self._counts[f"{attempt.purpose}_attempts"] += 1
         if attempt.status == "invalid":
