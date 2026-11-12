@@ -1,4 +1,5 @@
 import json
+import math
 import re
 from typing import Literal
 
@@ -127,6 +128,27 @@ class TrialCollector:
 
     return record
 
+  def _validate_cost(self, event: Event, record: StepView) -> float | None:
+    raw = (event.metrics or {}).get("cost")
+    if raw is None:
+      return None
+
+    if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+      raise BenchmarkError("Invalid reported cost in a step record.")
+
+    try:
+      cost = float(raw)
+    except OverflowError as exc:
+      raise BenchmarkError("Invalid reported cost in a step record.") from exc
+
+    if not math.isfinite(cost) or cost < 0:
+      raise BenchmarkError("Invalid reported cost in a step record.")
+
+    if not any(attempt.status == "completed" for attempt in record.attempts):
+      raise BenchmarkError("A reported cost requires a completed inference attempt.")
+
+    return cost
+
   def observe(self, event: Event) -> Reply | None:
     run_id = self._validate_run_id(event)
     record = self._validate_snapshot(event, run_id)
@@ -154,6 +176,8 @@ class TrialCollector:
       )
       if self._geometry is not None and geometry != self._geometry:
         raise BenchmarkError("Capture geometry changed during the trial.")
+
+      self._validate_cost(event, record)
 
     if run_id is not None:
       self._run_id = run_id
