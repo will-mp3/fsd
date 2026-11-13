@@ -1,7 +1,9 @@
 import json
+import os
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
+from tempfile import NamedTemporaryFile
 from types import SimpleNamespace
 from typing import Any
 
@@ -23,7 +25,7 @@ def test_archive_publishes_png_before_json_with_no_temporary_files(
 ) -> None:
   from fsd import archive
 
-  replace = archive.os.replace
+  replace = os.replace
   targets: list[str] = []
 
   def observe(source: str | Path, target: str | Path) -> None:
@@ -34,7 +36,7 @@ def test_archive_publishes_png_before_json_with_no_temporary_files(
     targets.append(target.name)
     replace(source, target)
 
-  monkeypatch.setattr(archive.os, "replace", observe)
+  monkeypatch.setattr(os, "replace", observe)
   archive.save_snapshot(tmp_path, snapshot())
   assert targets == ["0.png", "0.json"]
   folder = tmp_path / "run"
@@ -48,14 +50,14 @@ def test_failed_replacement_never_publishes_json_and_cleans_temporaries(
 ) -> None:
   from fsd import archive
 
-  replace = archive.os.replace
+  replace = os.replace
 
   def fail(source: str | Path, target: str | Path) -> None:
     if Path(target).suffix == suffix:
       raise OSError("replacement failed")
     replace(source, target)
 
-  monkeypatch.setattr(archive.os, "replace", fail)
+  monkeypatch.setattr(os, "replace", fail)
   with pytest.raises(OSError, match="replacement failed"):
     archive.save_snapshot(tmp_path, snapshot())
   folder = tmp_path / "run"
@@ -74,7 +76,7 @@ def test_failed_atomic_replacement_preserves_existing_file(
   def fail(source: str | Path, destination: str | Path) -> None:
     raise OSError("replace failed")
 
-  monkeypatch.setattr(archive.os, "replace", fail)
+  monkeypatch.setattr(os, "replace", fail)
   with pytest.raises(OSError, match="replace failed"):
     archive.atomic_write(target, b"new")
   assert target.read_bytes() == b"old"
@@ -99,11 +101,9 @@ def test_partial_write_or_close_failure_cleans_temp_without_publishing_a_pair(
 ) -> None:
   from fsd import archive
 
-  temporary_file = archive.NamedTemporaryFile
-
   @contextmanager
   def failing_file(**kwargs: Any) -> Iterator[Any]:
-    with temporary_file(**kwargs) as stream:
+    with NamedTemporaryFile(**kwargs) as stream:
       if f"0{suffix}" not in kwargs["prefix"]:
         yield stream
         return
