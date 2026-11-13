@@ -1,12 +1,13 @@
+import io
 from copy import deepcopy
 
 import pytest
+from PIL import Image
 
 from fsd.benchmark.contracts import BenchmarkError, FrameGeometry
 from fsd.benchmark.measure import TrialCollector
 from fsd.platform.base import Frame, Rect
 from tests.benchmark.helpers import step_event
-from tests.operator.helpers import png
 
 
 def test_distinct_captures_count_even_when_pixels_are_identical() -> None:
@@ -46,20 +47,28 @@ def test_duplicate_capture_is_rejected_without_changing_measurements() -> None:
 
 
 @pytest.mark.parametrize(
-  "screen_rect",
+  ("width", "height", "screen_rect"),
   [
-    Rect(1.0, 0.0, 50.0, 50.0),
-    Rect(0.0, 1.0, 50.0, 50.0),
-    Rect(0.0, 0.0, 100.0, 50.0),
-    Rect(0.0, 0.0, 50.0, 100.0),
+    (100, 100, Rect(1.0, 0.0, 50.0, 50.0)),
+    (100, 100, Rect(0.0, 1.0, 50.0, 50.0)),
+    (100, 100, Rect(0.0, 0.0, 100.0, 50.0)),
+    (100, 100, Rect(0.0, 0.0, 50.0, 100.0)),
+    (200, 100, Rect(0.0, 0.0, 50.0, 50.0)),
+    (100, 200, Rect(0.0, 0.0, 50.0, 50.0)),
   ],
-  ids=("origin-x", "origin-y", "width", "height"),
+  ids=("origin-x", "origin-y", "width", "height", "pixel-width", "pixel-height"),
 )
-def test_geometry_change_does_not_consume_the_step(screen_rect: Rect) -> None:
+def test_geometry_change_does_not_consume_the_step(
+  width: int,
+  height: int,
+  screen_rect: Rect,
+) -> None:
   collector = TrialCollector()
   collector.observe(step_event(0, attempts=(("decision", "completed"),)))
   before = collector.measurements(duration_seconds=1.0)
-  changed = step_event(1, attempts=(), frame=Frame(png(0), 100, 100, screen_rect))
+  buffer = io.BytesIO()
+  Image.new("L", (width, height)).save(buffer, format="PNG")
+  changed = step_event(1, attempts=(), frame=Frame(buffer.getvalue(), width, height, screen_rect))
 
   with pytest.raises(BenchmarkError, match="[Gg]eometry"):
     collector.observe(changed)

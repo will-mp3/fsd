@@ -1,4 +1,5 @@
 import json
+from copy import deepcopy
 from dataclasses import replace
 from typing import cast
 
@@ -106,6 +107,56 @@ def test_inconsistent_step_metadata_does_not_change_collector_state(
   assert collector.measurements(duration_seconds=0.0) == before
   assert collector.observe(event) is None
   assert collector.run_id == "run"
+
+
+@pytest.mark.parametrize(
+  ("layer", "field", "value"),
+  [
+    ("record", "schema_version", True),
+    ("record", "run_id", None),
+    ("record", "step", -1),
+    ("record", "step", False),
+    ("record", "step", 0.0),
+    ("record", "attempts", None),
+    ("frame", "width", 0),
+    ("frame", "height", 0),
+    ("frame", "width", True),
+    ("frame", "height", 100.0),
+    ("attempt", "purpose", "planner"),
+    ("attempt", "status", "retrying"),
+    ("attempt", "status", None),
+  ],
+)
+def test_malformed_record_fields_are_rejected_without_changing_state(
+  layer: str,
+  field: str,
+  value: object,
+) -> None:
+  collector = measure.TrialCollector()
+  event = step_event(0, attempts=(("decision", "completed"),))
+  snapshot = event.snapshot
+  assert snapshot is not None
+  record = deepcopy(snapshot.record)
+  target: object = record
+  if layer == "frame":
+    target = record["frame"]
+  elif layer == "attempt":
+    attempts = record["attempts"]
+    assert isinstance(attempts, list)
+    target = attempts[0]
+  assert isinstance(target, dict)
+  target[field] = value
+  before = collector.measurements(duration_seconds=0.0)
+
+  with pytest.raises(BenchmarkError, match="Invalid benchmark step record"):
+    collector.observe(replace(event, snapshot=replace(snapshot, record=record)))
+
+  assert collector.run_id is None
+  assert collector.geometry is None
+  assert collector.termination is None
+  assert collector.measurements(duration_seconds=0.0) == before
+  collector.observe(event)
+  assert collector.measurements(duration_seconds=1.0).captured_steps == 1
 
 
 @pytest.mark.parametrize("layer", ["snapshot", "record", "metrics"])
