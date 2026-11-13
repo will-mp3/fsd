@@ -76,7 +76,7 @@ def test_failed_atomic_replacement_preserves_existing_file(
 
   monkeypatch.setattr(archive.os, "replace", fail)
   with pytest.raises(OSError, match="replace failed"):
-    archive._atomic_write(target, b"new")
+    archive.atomic_write(target, b"new")
   assert target.read_bytes() == b"old"
   assert list(tmp_path.iterdir()) == [target]
 
