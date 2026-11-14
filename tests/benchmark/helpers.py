@@ -1,16 +1,34 @@
 from dataclasses import replace
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Literal, cast
 
+from fsd.approval.store import ApprovalStore
 from fsd.benchmark.contracts import GoalScore, Measurements, RunManifest, TrialResult
+from fsd.benchmark.storage import prepare_trial
 from fsd.benchmark.tasks import task_for, task_manifest
 from fsd.operator.config import Settings
 from fsd.operator.contracts import Event
 from fsd.operator.records import Purpose, StepRecord
-from fsd.platform.base import Frame, Rect
+from fsd.platform.base import Frame, Rect, WindowInfo
+from fsd.platform.fake import FakePlatform
 from tests.operator.helpers import decision, png, verdict
 
 AttemptStatus = Literal["pending", "completed", "invalid", "interrupted", "error"]
+
+
+def prepared_desktop(tmp_path: Path, task_id: str) -> tuple[Path, FakePlatform, ApprovalStore]:
+  root = tmp_path / "trial"
+  manifest = prepare_trial(root, task_id)
+  store = ApprovalStore(tmp_path / "approvals.json")
+  store.approve(manifest.app_id)
+  bounds = Rect(0.0, 0.0, 100.0, 100.0)
+  platform = FakePlatform(
+    frontmost=manifest.app_id,
+    windows=[WindowInfo(manifest.app_id, bounds, 0)],
+    frames=[Frame(png(index), 100, 100, bounds) for index in range(30)],
+  )
+  return root, platform, store
 
 
 def example_run(
