@@ -16,15 +16,6 @@ from fsd.operator.contracts import Event
 from tests.benchmark.helpers import example_run, step_event
 
 
-@pytest.fixture
-def started_trial(tmp_path: Path) -> tuple[Path, storage.TrialStorage]:
-  root = tmp_path / "trial"
-  storage.prepare_trial(root, "finder-rename")
-  trial = storage.TrialStorage(root)
-  trial.start(example_run())
-  return root, trial
-
-
 def test_events_preserve_order_without_serializing_messages(
   started_trial: tuple[Path, storage.TrialStorage],
 ) -> None:

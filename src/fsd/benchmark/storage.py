@@ -2,7 +2,14 @@ import json
 from pathlib import Path
 
 from fsd.archive import atomic_write, save_snapshot
-from fsd.benchmark.contracts import BenchmarkError, RunManifest, TaskManifest, TaskSpec
+from fsd.benchmark.contracts import (
+  BenchmarkError,
+  FrameGeometry,
+  RunManifest,
+  TaskManifest,
+  TaskSpec,
+  TrialResult,
+)
 from fsd.benchmark.fixtures import ArtifactMismatch, create_workspace, read_regular
 from fsd.benchmark.tasks import task_for, task_manifest
 from fsd.operator.contracts import Event
@@ -98,6 +105,7 @@ class TrialStorage:
   def __init__(self, root: Path) -> None:
     self._root = root
     self._manifest: RunManifest | None = None
+    self._finished = False
 
   def start(self, manifest: RunManifest) -> None:
     if self._manifest is not None:
@@ -137,6 +145,8 @@ class TrialStorage:
   def _require_active(self) -> RunManifest:
     if self._manifest is None:
       raise BenchmarkError("This storage instance has not successfully started a trial.")
+    if self._finished:
+      raise BenchmarkError("This trial has already finished.")
     return self._manifest
 
   def write_event(self, event: Event) -> None:
@@ -168,3 +178,38 @@ class TrialStorage:
       raise BenchmarkError(
         "Could not record the benchmark event; any partial evidence was preserved."
       ) from exc
+
+  def set_geometry(self, geometry: FrameGeometry) -> None:
+    manifest = self._require_active()
+    if manifest.geometry is not None:
+      raise BenchmarkError("Capture geometry has already been recorded.")
+
+    updated = manifest.model_copy(update={"geometry": geometry})
+    try:
+      content = updated.model_dump_json(indent=2).encode("utf-8") + b"\n"
+      atomic_write(self._root / "run.json", content)
+    except (OSError, ValueError) as exc:
+      raise BenchmarkError(
+        "Could not record capture geometry; existing trial evidence was preserved."
+      ) from exc
+
+    self._manifest = updated
+
+  def finish(self, result: TrialResult) -> None:
+    manifest = self._require_active()
+    if result.trial_id != manifest.trial_id:
+      raise BenchmarkError("The result belonds to a different trial.")
+
+    try:
+      target = self._root / "result.json"
+      if target.exists() or target.is_symlink():
+        raise BenchmarkError("The trial already contains a result.")
+
+      content = result.model_dump_json(indent=2).encode("utf-8") + b"\n"
+      atomic_write(target, content)
+    except (OSError, ValueError) as exc:
+      raise BenchmarkError(
+        "Could not publish the trial result; existing trial evidence was preserved."
+      ) from exc
+
+    self._finished = True

@@ -2,7 +2,7 @@ from dataclasses import replace
 from datetime import UTC, datetime
 from typing import Literal, cast
 
-from fsd.benchmark.contracts import RunManifest
+from fsd.benchmark.contracts import GoalScore, Measurements, RunManifest, TrialResult
 from fsd.benchmark.tasks import task_for, task_manifest
 from fsd.operator.config import Settings
 from fsd.operator.contracts import Event
@@ -25,6 +25,18 @@ def example_run(
     settings=replace(Settings(), action_limit=action_limit),
     approved_apps=("com.apple.finder",),
     started_at=datetime(2026, 11, 13, 12, tzinfo=UTC),
+  )
+
+
+def example_result(*, trial_id: str = "0123456789abcdef") -> TrialResult:
+  return TrialResult(
+    trial_id=trial_id,
+    engine_run_id="run",
+    termination="done",
+    score=GoalScore(result="pass", evidence="Expected file contents matched."),
+    infrastructure="ok",
+    measurements=Measurements(duration_seconds=1.5),
+    ended_at=datetime(2026, 11, 13, 12, 0, 2, tzinfo=UTC),
   )
 
 
