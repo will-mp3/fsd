@@ -1,11 +1,43 @@
+import json
 from pathlib import Path
 
-from fsd.archive import atomic_write
+from fsd.archive import atomic_write, save_snapshot
 from fsd.benchmark.contracts import BenchmarkError, RunManifest, TaskManifest, TaskSpec
 from fsd.benchmark.fixtures import ArtifactMismatch, create_workspace, read_regular
 from fsd.benchmark.tasks import task_for, task_manifest
+from fsd.operator.contracts import Event
 
 MAX_JSON_BYTES = 1024 * 1024
+
+EVENT_METRIC_KEYS = frozenset(
+  {
+    "run_id",
+    "step",
+    "frame_width",
+    "frame_height",
+    "frame_bytes",
+    "capture_seconds",
+    "bundle_id",
+    "outcome",
+    "invalid_cause",
+    "visible_change",
+    "stuck",
+    "images_sent",
+    "decision",
+    "previous_result",
+    "encode_seconds",
+    "request_seconds",
+    "input_tokens",
+    "cached_input_tokens",
+    "output_tokens",
+    "cost",
+    "screenshot_to_decision_seconds",
+    "action",
+    "refusal",
+    "execution_seconds",
+    "screenshot_to_action_seconds",
+  }
+)
 
 
 def prepare_trial(root: Path, task_id: str) -> TaskManifest:
@@ -101,3 +133,38 @@ class TrialStorage:
       ) from exc
 
     self._manifest = manifest
+
+  def _require_active(self) -> RunManifest:
+    if self._manifest is None:
+      raise BenchmarkError("This storage instance has not successfully started a trial.")
+    return self._manifest
+
+  def write_event(self, event: Event) -> None:
+    self._require_active()
+    metrics = event.metrics or {}
+    if metrics.keys() - EVENT_METRIC_KEYS:
+      raise BenchmarkError("The event contains unsupported metric keys.")
+
+    try:
+      if any(
+        value is not None and type(value) not in (str, int, float, bool)
+        for value in metrics.values()
+      ):
+        raise ValueError("Event metrics must contain only JSON scalar values.")
+
+      payload = {
+        "kind": event.kind,
+        "limit": event.limit,
+        "metrics": metrics,
+      }
+      line = json.dumps(payload, allow_nan=False, ensure_ascii=False) + "\n"
+
+      if event.snapshot is not None:
+        save_snapshot(self._root / "frames", event.snapshot)
+
+      with (self._root / "events.jsonl").open("a", encoding="utf-8") as stream:
+        stream.write(line)
+    except (OSError, TypeError, ValueError) as exc:
+      raise BenchmarkError(
+        "Could not record the benchmark event; any partial evidence was preserved."
+      ) from exc
