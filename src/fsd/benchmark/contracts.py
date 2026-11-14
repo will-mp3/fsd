@@ -1,8 +1,11 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
+from datetime import UTC, datetime
+from math import isfinite
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, field_validator
 
+from fsd.operator.config import Settings
 from fsd.platform.base import Rect
 
 Termination = Literal["done", "help", "limit", "cancelled", "failed", "interrupted"]
@@ -85,3 +88,50 @@ class Measurements(StoredModel):
   reported_cost: float | None = Field(default=None, ge=0)
   cost_measurements: int = Field(default=0, ge=0)
   attempts_without_cost: int = Field(default=0, ge=0)
+
+
+class RunManifest(StoredModel):
+  schema_version: Literal[1] = 1
+  trial_id: str = Field(pattern=r"^[0-9a-f]{16}$")
+  task: TaskManifest
+  settings: Settings
+  memory_mode: Literal["off"] = "off"
+  approved_apps: tuple[str, ...]
+  revision: str | None = Field(default=None, max_length=200)
+  started_at: AwareDatetime
+  geometry: FrameGeometry | None = None
+
+  @field_validator("settings")
+  @classmethod
+  def valid_execution_settings(cls, value: Settings) -> Settings:
+    for definition in fields(Settings):
+      if definition.type not in (int, float):
+        continue
+
+      number = getattr(value, definition.name)
+      allowed_types = (int,) if definition.type is int else (int, float)
+      if type(number) not in allowed_types:
+        raise ValueError(f"{definition.name} has an invalid numeric type.")
+      if isinstance(number, float) and not isfinite(number):
+        raise ValueError(f"{definition.name} must be finite.")
+
+      allows_zero = definition.name in {"retries", "verify_settle_ms"}
+      if number < 0 or (number == 0 and not allows_zero):
+        requirement = "nonnegative" if allows_zero else "positive"
+        raise ValueError(f"{definition.name} must be {requirement}.")
+
+    return value
+
+  @field_validator("approved_apps")
+  @classmethod
+  def canonical_approved_apps(cls, value: tuple[str, ...]) -> tuple[str, ...]:
+    if any(not app or app != app.strip() for app in value):
+      raise ValueError("Approved app IDs must be nonempty and have no surrounding whitespace.")
+    if value != tuple(sorted(set(value))):
+      raise ValueError("Approved app IDs must be sorted and unique.")
+    return value
+
+  @field_validator("started_at")
+  @classmethod
+  def utc_started_at(cls, value: datetime) -> datetime:
+    return value.astimezone(UTC)
