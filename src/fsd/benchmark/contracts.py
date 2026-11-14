@@ -1,9 +1,16 @@
 from dataclasses import dataclass, fields
 from datetime import UTC, datetime
 from math import isfinite
-from typing import Literal
+from typing import Literal, Self
 
-from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, field_validator
+from pydantic import (
+  AwareDatetime,
+  BaseModel,
+  ConfigDict,
+  Field,
+  field_validator,
+  model_validator,
+)
 
 from fsd.operator.config import Settings
 from fsd.platform.base import Rect
@@ -48,6 +55,11 @@ class StoredModel(BaseModel):
     if type(value) is not int:
       raise ValueError("Version fields must be integers.")
     return value
+
+  @field_validator("started_at", "ended_at", check_fields=False)
+  @classmethod
+  def utc_timestamp(cls, value: datetime) -> datetime:
+    return value.astimezone(UTC)
 
 
 class TaskManifest(StoredModel):
@@ -135,3 +147,36 @@ class RunManifest(StoredModel):
   @classmethod
   def utc_started_at(cls, value: datetime) -> datetime:
     return value.astimezone(UTC)
+
+
+class TrialResult(StoredModel):
+  schema_version: Literal[1] = 1
+  trial_id: str = Field(pattern=r"^[0-9a-f]{16}$")
+  engine_run_id: str | None
+  termination: Termination
+  score: GoalScore
+  infrastructure: Literal["ok", "error"]
+  error_category: Literal["recording", "scoring", "execution"] | None = None
+  measurements: Measurements
+  ended_at: AwareDatetime
+
+  @model_validator(mode="after")
+  def consistent_outcome(self) -> Self:
+    if self.infrastructure == "ok":
+      if self.error_category is not None:
+        raise ValueError("Healthy infrastructure cannot have an error category.")
+      if self.score.result == "error":
+        raise ValueError("A scoring error requires an infrastructure error.")
+    elif self.error_category is None:
+      raise ValueError("An infrastructure error requires an error category.")
+
+    if self.error_category == "scoring" and self.score.result != "error":
+      raise ValueError("A scoring error category requires an error score.")
+
+    return self
+
+  @property
+  def unassisted_success(self) -> bool:
+    return (
+      self.termination == "done" and self.score.result == "pass" and self.infrastructure == "ok"
+    )
