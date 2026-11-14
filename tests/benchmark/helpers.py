@@ -1,11 +1,31 @@
+from dataclasses import replace
+from datetime import UTC, datetime
 from typing import Literal, cast
 
+from fsd.benchmark.contracts import RunManifest
+from fsd.benchmark.tasks import task_for, task_manifest
+from fsd.operator.config import Settings
 from fsd.operator.contracts import Event
 from fsd.operator.records import Purpose, StepRecord
 from fsd.platform.base import Frame, Rect
 from tests.operator.helpers import decision, png, verdict
 
 AttemptStatus = Literal["pending", "completed", "invalid", "interrupted", "error"]
+
+
+def example_run(
+  *,
+  trial_id: str = "0123456789abcdef",
+  task_id: str = "finder-rename",
+  action_limit: int = 100,
+) -> RunManifest:
+  return RunManifest(
+    trial_id=trial_id,
+    task=task_manifest(task_for(task_id)),
+    settings=replace(Settings(), action_limit=action_limit),
+    approved_apps=("com.apple.finder",),
+    started_at=datetime(2026, 11, 13, 12, tzinfo=UTC),
+  )
 
 
 def step_event(

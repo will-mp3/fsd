@@ -143,11 +143,6 @@ class RunManifest(StoredModel):
       raise ValueError("Approved app IDs must be sorted and unique.")
     return value
 
-  @field_validator("started_at")
-  @classmethod
-  def utc_started_at(cls, value: datetime) -> datetime:
-    return value.astimezone(UTC)
-
 
 class TrialResult(StoredModel):
   schema_version: Literal[1] = 1

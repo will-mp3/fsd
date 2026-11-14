@@ -1,7 +1,7 @@
 from pathlib import Path
 
 from fsd.archive import atomic_write
-from fsd.benchmark.contracts import BenchmarkError, TaskManifest, TaskSpec
+from fsd.benchmark.contracts import BenchmarkError, RunManifest, TaskManifest, TaskSpec
 from fsd.benchmark.fixtures import ArtifactMismatch, create_workspace, read_regular
 from fsd.benchmark.tasks import task_for, task_manifest
 
@@ -60,3 +60,44 @@ def load_task(root: Path) -> tuple[TaskManifest, TaskSpec]:
     raise BenchmarkError("The prepared task does not match the built-in benchmark definition.")
 
   return manifest, task
+
+
+class TrialStorage:
+  def __init__(self, root: Path) -> None:
+    self._root = root
+    self._manifest: RunManifest | None = None
+
+  def start(self, manifest: RunManifest) -> None:
+    if self._manifest is not None:
+      raise BenchmarkError("This storage instance has already started a trial.")
+
+    prepared, _ = load_task(self._root)
+    if manifest.task != prepared:
+      raise BenchmarkError("The run manifest does not match the prepared task.")
+
+    try:
+      content = manifest.model_dump_json(indent=2).encode("utf-8") + b"\n"
+
+      for name in ("run.json", "result.json", "frames", "events.jsonl"):
+        path = self._root / name
+        if path.exists() or path.is_symlink():
+          raise BenchmarkError("The trial already contains execution artifacts.")
+
+      # The permanent claim prevents reruns even if later publication fails
+      with (self._root / ".started").open("x", encoding="utf-8") as stream:
+        stream.write(manifest.trial_id + "\n")
+
+      with (self._root / "events.jsonl").open("x", encoding="utf-8"):
+        pass
+
+      atomic_write(self._root / "run.json", content)
+    except FileExistsError as exc:
+      raise BenchmarkError(
+        "The trial has already been claimed or contains execution artifacts."
+      ) from exc
+    except (OSError, ValueError) as exc:
+      raise BenchmarkError(
+        "Could not start the benchmark trial; any partial files were preserved."
+      ) from exc
+
+    self._manifest = manifest
